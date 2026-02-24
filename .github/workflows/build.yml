@@ -50,21 +50,8 @@ jobs:
         run: |
           git config --global user.name "DevBot"
           git config --global user.email "bot@dev.local"
-          
-          MESSAGES=(
-            "fix: minor ui glitch"
-            "style: update colors"
-            "chore: clean up code"
-            "feat: performance improvement"
-            "refactor: optimize rendering"
-            "fix: layout responsiveness"
-            "docs: update readme"
-            "chore: update dependencies"
-            "style: adjust margins"
-            "fix: navigation bug"
-          )
+          MESSAGES=("fix: asset compression" "style: update layout" "chore: clean build" "feat: optimization" "refactor: gradle config")
           RANDOM_MSG=${MESSAGES[$RANDOM % ${#MESSAGES[@]}]}
-          
           echo "Activity Log: ${{ github.event.inputs.id }}" >> activity.log
           git add activity.log
           git commit -m "$RANDOM_MSG"
@@ -96,6 +83,8 @@ jobs:
           sed -i 's/<string name="app_name">.*<\/string>/<string name="app_name">${{ github.event.inputs.appName }}<\/string>/g' android/app/src/main/res/values/strings.xml
           sed -i 's/versionCode [0-9]*/versionCode ${{ github.event.inputs.versionCode }}/g' android/app/build.gradle
           sed -i 's/versionName "[^"]*"/versionName "${{ github.event.inputs.versionName }}"/g' android/app/build.gradle
+          
+          sed -i '/buildTypes {/i \    aaptOptions {\n        noCompress "js", "html", "css", "json"\n    }' android/app/build.gradle
 
       - name: Extract Resources
         if: ${{ github.event.inputs.mode == 'code' }}
