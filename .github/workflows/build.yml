@@ -32,12 +32,13 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+          cache: 'npm' # <-- AKTIFKAN CACHE UNTUK CAPACITOR & NODE MODULES
 
-      # FIX: Update ke Java 21 untuk Capacitor terbaru
       - uses: actions/setup-java@v4
         with:
           distribution: 'zulu'
           java-version: '21'
+          cache: 'gradle' # <-- AKTIFKAN CACHE UNTUK GRADLE & ANDROID SDK
 
       - name: Konfigurasi App & Inject Data
         run: |
