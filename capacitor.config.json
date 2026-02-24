@@ -1,0 +1,13 @@
+{
+  "appId": "com.agung.app",
+  "appName": "Agung Aplikasi",
+  "webDir": "www",
+  "bundledWebRuntime": false,
+  "server": {
+    "url": "https://agungwandev.com",
+    "cleartext": true,
+    "allowNavigation": [
+      "*"
+    ]
+  }
+}

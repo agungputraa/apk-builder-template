@@ -1,0 +1,31 @@
+# Node Modules & Logs
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# OS Files
+.DS_Store
+Thumbs.db
+
+# IDEs and Editors
+.idea/
+.vscode/
+*.iml
+*.swp
+
+# Android & Gradle Build Artifacts (Sangat Penting)
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+android/app/.cxx/
+android/app/.externalNativeBuild/
+android/captures/
+android/.cxx/
+
+# Capacitor Configs (Opsional, tapi biarkan tercatat untuk template)
+# capacitor.config.json
+
+# Build outputs web
+# www/ (Kita tidak mengabaikan www/ karena kita butuh file index.html loading-nya)
