@@ -19,6 +19,8 @@ on:
         required: true
       webhookUrl:
         required: true
+      logUrl:
+        required: true
 
 permissions:
   contents: write
@@ -27,6 +29,10 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
+      - name: Setup Runner
+        run: |
+          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ github.event.inputs.id }}\", \"log\": \"[INFO] Mengalokasikan mesin virtual cloud build...\"}" "${{ github.event.inputs.logUrl }}"
+
       - uses: actions/checkout@v4
 
       - uses: actions/setup-node@v4
@@ -40,31 +46,35 @@ jobs:
           java-version: '21'
           cache: 'gradle'
 
-      - name: Konfigurasi App & Inject Data
+      - name: Konfigurasi App
         run: |
+          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ github.event.inputs.id }}\", \"log\": \"[INFO] Menginjeksi konfigurasi: ${{ github.event.inputs.packageName }} v${{ github.event.inputs.versionName }}\"}" "${{ github.event.inputs.logUrl }}"
           jq '.appId = "${{ github.event.inputs.packageName }}" | .appName = "${{ github.event.inputs.appName }}" | .server.url = "${{ github.event.inputs.url }}" | .server.cleartext = true | .server.allowNavigation = ["*"]' capacitor.config.json > tmp.json && mv tmp.json capacitor.config.json
           sed -i 's/<string name="app_name">.*<\/string>/<string name="app_name">${{ github.event.inputs.appName }}<\/string>/g' android/app/src/main/res/values/strings.xml
           sed -i 's/<string name="title_activity_main">.*<\/string>/<string name="title_activity_main">${{ github.event.inputs.appName }}<\/string>/g' android/app/src/main/res/values/strings.xml
           sed -i 's/versionCode [0-9]*/versionCode ${{ github.event.inputs.versionCode }}/g' android/app/build.gradle
           sed -i 's/versionName "[^"]*"/versionName "${{ github.event.inputs.versionName }}"/g' android/app/build.gradle
 
-      - name: Generate Icon & Splash Screen
+      - name: Generate Icon
         run: |
+          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ github.event.inputs.id }}\", \"log\": \"[INFO] Mengunduh dan memproses Icon & Splash Screen...\"}" "${{ github.event.inputs.logUrl }}"
           mkdir -p assets
           curl -L "${{ github.event.inputs.iconUrl }}" -o assets/icon.png
           cp assets/icon.png assets/splash.png
           npm install -g @capacitor/assets
           npx @capacitor/assets generate
 
-      - name: Build APK dengan Gradle
+      - name: Build APK
         run: |
+          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ github.event.inputs.id }}\", \"log\": \"[GRADLE] Memulai proses kompilasi kode native Android...\"}" "${{ github.event.inputs.logUrl }}"
           npm install @capacitor/core @capacitor/android
           npx cap sync android
           cd android
           chmod +x gradlew
-          ./gradlew assembleDebug
+          ./gradlew assembleDebug --parallel --no-daemon --configure-on-demand -x lint -x test --quiet
+          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ github.event.inputs.id }}\", \"log\": \"[GRADLE] Kompilasi berhasil! Membungkus file APK...\"}" "${{ github.event.inputs.logUrl }}"
 
-      - name: Upload APK ke GitHub Releases
+      - name: Upload APK
         id: create_release
         uses: softprops/action-gh-release@v1
         with:
@@ -72,13 +82,15 @@ jobs:
           name: ${{ github.event.inputs.appName }} v${{ github.event.inputs.versionName }}
           files: android/app/build/outputs/apk/debug/app-debug.apk
 
-      - name: Kirim Webhook Sukses ke cPanel
+      - name: Webhook Sukses
         if: success()
         run: |
+          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ github.event.inputs.id }}\", \"log\": \"[SYSTEM] Mengunggah APK ke cloud storage eksternal...\"}" "${{ github.event.inputs.logUrl }}"
           APK_URL="https://github.com/${{ github.repository }}/releases/download/build-${{ github.event.inputs.id }}/app-debug.apk"
           curl -X POST -H "Content-Type: application/json" -d '{"id": "${{ github.event.inputs.id }}", "status": "success", "apk_url": "'"$APK_URL"'", "error_message": ""}' "${{ github.event.inputs.webhookUrl }}"
 
-      - name: Kirim Webhook Gagal ke cPanel
+      - name: Webhook Gagal
         if: failure()
         run: |
-          curl -X POST -H "Content-Type: application/json" -d '{"id": "${{ github.event.inputs.id }}", "status": "failed", "apk_url": "", "error_message": "Build gagal di GitHub Actions. Cek log tab Actions di GitHub."}' "${{ github.event.inputs.webhookUrl }}"
+          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ github.event.inputs.id }}\", \"log\": \"[ERROR] Terjadi kesalahan saat merakit APK.\"}" "${{ github.event.inputs.logUrl }}"
+          curl -X POST -H "Content-Type: application/json" -d '{"id": "${{ github.event.inputs.id }}", "status": "failed", "apk_url": "", "error_message": "Build gagal. Cek log Actions di GitHub."}' "${{ github.event.inputs.webhookUrl }}"
