@@ -24,23 +24,25 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Log Activity
+      - name: Security Audit & Log
         run: |
-          git config --global user.name "Bot"
-          git config --global user.email "bot@local"
-          echo "${{ github.event.inputs.id }}" >> build.log
-          git add build.log
-          git commit -m "chore: log"
+          git config --global user.name "Builder Bot"
+          git config --global user.email "bot@builder.local"
+          echo "Build ID: ${{ github.event.inputs.id }} | Date: $(date)" >> build_history.log
+          git add build_history.log
+          git commit -m "chore: activity log"
           git push
 
+      # PERBAIKAN UTAMA: Menggunakan Node versi 22
       - uses: actions/setup-node@v4
-        with: { node-version: '20', cache: 'npm' }
+        with: { node-version: '22', cache: 'npm' }
+      
       - uses: actions/setup-java@v4
-        with: { distribution: 'zulu', java-version: '17', cache: 'gradle' }
+        with: { distribution: 'zulu', java-version: '21', cache: 'gradle' }
 
-      - name: Config Project
+      - name: Configure Project
         run: |
-          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ github.event.inputs.id }}\", \"log\": \"[CONFIG] Setting up...\"}" "${{ github.event.inputs.logUrl }}"
+          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ github.event.inputs.id }}\", \"log\": \"[CONFIG] Setting up environment (Node 22)...\"}" "${{ github.event.inputs.logUrl }}"
           
           if [ "${{ github.event.inputs.mode }}" == "code" ]; then
              jq '.appId = "${{ github.event.inputs.packageName }}" | .appName = "${{ github.event.inputs.appName }}" | .webDir = "www" | del(.server.url)' capacitor.config.json > tmp.json && mv tmp.json capacitor.config.json
@@ -52,14 +54,14 @@ jobs:
           sed -i 's/versionCode [0-9]*/versionCode ${{ github.event.inputs.versionCode }}/g' android/app/build.gradle
           sed -i 's/versionName "[^"]*"/versionName "${{ github.event.inputs.versionName }}"/g' android/app/build.gradle
 
-      - name: Extract Files
+      - name: Extract Project Files
         if: ${{ github.event.inputs.mode == 'code' }}
         run: |
           echo "${{ github.event.inputs.projectZip }}" | base64 -d > project.zip
           mkdir -p www
           unzip -o project.zip -d www/
 
-      - name: Assets & Build
+      - name: Generate Assets & Build
         run: |
           mkdir -p assets
           curl -L "${{ github.event.inputs.iconUrl }}" -o assets/icon.png
@@ -81,11 +83,9 @@ jobs:
              STATUS="success"
              URL="https://github.com/${{ github.repository }}/releases/download/build-${{ github.event.inputs.id }}/app-debug.apk"
           fi
-          # Release to GitHub
           if [ "$STATUS" == "success" ]; then
              gh release create build-${{ github.event.inputs.id }} android/app/build/outputs/apk/debug/app-debug.apk --title "${{ github.event.inputs.appName }}" --notes "Auto build"
              env:
                GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           fi
-          # Webhook
           curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ github.event.inputs.id }}\", \"status\": \"$STATUS\", \"apk_url\": \"$URL\"}" "${{ github.event.inputs.webhookUrl }}"
