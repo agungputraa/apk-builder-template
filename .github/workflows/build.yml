@@ -29,15 +29,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Menggunakan Node.js versi 22 sesuai standar Capacitor terbaru
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
 
+      # FIX: Update ke Java 21 untuk Capacitor terbaru
       - uses: actions/setup-java@v4
         with:
           distribution: 'zulu'
-          java-version: '17'
+          java-version: '21'
 
       - name: Konfigurasi App & Inject Data
         run: |
