@@ -1,4 +1,4 @@
-name: App Studio CI
+name: Pro APK Builder
 
 on:
   workflow_dispatch:
@@ -21,37 +21,49 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
-    env:
-      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
     steps:
       - uses: actions/checkout@v4
 
-      - name: Humanize Activity
+      - name: Humanize Commit Activity
         run: |
           git config --global user.name "DevBot"
-          git config --global user.email "bot@studio.local"
+          git config --global user.email "bot@dev.local"
           
-          MSGS=("fix: ui glitch" "chore: update assets" "feat: performance boost" "refactor: core logic" "style: layout adjustment" "fix: minor bug")
-          RAND_MSG=${MSGS[$RANDOM % ${#MSGS[@]}]}
+          MESSAGES=(
+            "fix: minor ui glitch"
+            "style: update colors"
+            "chore: clean up code"
+            "feat: performance improvement"
+            "refactor: optimize rendering"
+            "fix: layout responsiveness"
+            "docs: update readme"
+            "chore: update dependencies"
+            "style: adjust margins"
+            "fix: navigation bug"
+          )
+          RANDOM_MSG=${MESSAGES[$RANDOM % ${#MESSAGES[@]}]}
           
-          echo "Activity: $RAND_MSG" >> activity.log
+          echo "Activity Log: ${{ github.event.inputs.id }}" >> activity.log
           git add activity.log
-          git commit -m "$RAND_MSG"
+          git commit -m "$RANDOM_MSG"
           git push
 
-      - name: Notify Init
-        run: curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ github.event.inputs.id }}\", \"log\": \"[1/5] Initializing Cloud Runner...\"}" "${{ github.event.inputs.logUrl }}"
+      - name: Setup Node with Cache
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
 
-      - uses: actions/setup-node@v4
-        with: { node-version: '22', cache: 'npm' }
-      
-      - uses: actions/setup-java@v4
-        with: { distribution: 'zulu', java-version: '21', cache: 'gradle' }
+      - name: Setup Java with Cache
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'zulu'
+          java-version: '21'
+          cache: 'gradle'
 
-      - name: Configure
+      - name: Initialize Environment
         run: |
-          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ github.event.inputs.id }}\", \"log\": \"[2/5] Configuring Project Environment...\"}" "${{ github.event.inputs.logUrl }}"
+          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ github.event.inputs.id }}\", \"log\": \"[SYSTEM] Initializing Virtual Machine...\"}" "${{ github.event.inputs.logUrl }}"
           
           if [ "${{ github.event.inputs.mode }}" == "code" ]; then
              jq '.appId = "${{ github.event.inputs.packageName }}" | .appName = "${{ github.event.inputs.appName }}" | .webDir = "www" | del(.server.url)' capacitor.config.json > tmp.json && mv tmp.json capacitor.config.json
@@ -63,48 +75,55 @@ jobs:
           sed -i 's/versionCode [0-9]*/versionCode ${{ github.event.inputs.versionCode }}/g' android/app/build.gradle
           sed -i 's/versionName "[^"]*"/versionName "${{ github.event.inputs.versionName }}"/g' android/app/build.gradle
 
-      - name: Prepare Assets
+      - name: Extract Resources
+        if: ${{ github.event.inputs.mode == 'code' }}
         run: |
-          if [ "${{ github.event.inputs.mode }}" == "code" ]; then
-             echo "${{ github.event.inputs.projectZip }}" | base64 -d > project.zip
-             mkdir -p www
-             unzip -o -q project.zip -d www/
-          fi
+          echo "${{ github.event.inputs.projectZip }}" | base64 -d > project.zip
+          mkdir -p www
+          unzip -o project.zip -d www/
 
+      - name: Generate Assets
+        run: |
+          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ github.event.inputs.id }}\", \"log\": \"[BUILD] Processing Assets & Icons...\"}" "${{ github.event.inputs.logUrl }}"
+          
           mkdir -p assets
-          curl -s -L "${{ github.event.inputs.iconUrl }}" -o assets/icon.png
+          curl -L "${{ github.event.inputs.iconUrl }}" -o assets/icon.png
           cp assets/icon.png assets/splash.png
           
-          npm ci --silent
-          npm install @capacitor/assets --silent
-          npx @capacitor/assets generate --iconBackgroundColor #ffffff --splashBackgroundColor #ffffff
+          npm install --prefer-offline --no-audit
+          npm install @capacitor/assets --prefer-offline --no-audit
+          npx @capacitor/assets generate
           npx cap sync android
 
-      - name: Compile
+      - name: Compile APK
         run: |
-          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ github.event.inputs.id }}\", \"log\": \"[3/5] Compiling APK (Gradle)...\"}" "${{ github.event.inputs.logUrl }}"
+          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ github.event.inputs.id }}\", \"log\": \"[BUILD] Compiling Native Code (Gradle)...\"}" "${{ github.event.inputs.logUrl }}"
+          
           cd android
           chmod +x gradlew
           ./gradlew assembleDebug --parallel --no-daemon --quiet
 
-      - name: Release
+      - name: Release Artifact
         id: create_release
         if: success()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ github.event.inputs.id }}\", \"log\": \"[4/5] Signing & Uploading...\"}" "${{ github.event.inputs.logUrl }}"
-          gh release create build-${{ github.event.inputs.id }} android/app/build/outputs/apk/debug/app-debug.apk --title "${{ github.event.inputs.appName }}" --notes "Version ${{ github.event.inputs.versionName }}"
+          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ github.event.inputs.id }}\", \"log\": \"[UPLOAD] Finalizing APK...\"}" "${{ github.event.inputs.logUrl }}"
+          
+          gh release create build-${{ github.event.inputs.id }} android/app/build/outputs/apk/debug/app-debug.apk --title "${{ github.event.inputs.appName }}" --notes "Build generated via App Studio"
 
-      - name: Finalize
+      - name: Notify System
         if: always()
         run: |
           STATUS="failed"
           APK_URL=""
-          MSG="[ERROR] Build Process Failed."
+          MSG="[ERROR] Build process interrupted."
           
           if [ "${{ job.status }}" == "success" ]; then
              STATUS="success"
              APK_URL="https://github.com/${{ github.repository }}/releases/download/build-${{ github.event.inputs.id }}/app-debug.apk"
-             MSG="[5/5] SUCCESS! APK Ready for Download."
+             MSG="[SUCCESS] APK Ready for Download."
           fi
           
           curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ github.event.inputs.id }}\", \"log\": \"$MSG\"}" "${{ github.event.inputs.logUrl }}"
