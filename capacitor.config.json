@@ -1,13 +1,16 @@
 {
-  "appId": "com.agung.app",
-  "appName": "Agung Aplikasi",
+  "appId": "com.example.app",
+  "appName": "App Template",
   "webDir": "www",
   "bundledWebRuntime": false,
   "server": {
-    "url": "https://agungwandev.com",
-    "cleartext": true,
+    "androidScheme": "https",
     "allowNavigation": [
       "*"
-    ]
+    ],
+    "cleartext": true
+  },
+  "android": {
+    "allowMixedContent": true
   }
 }
