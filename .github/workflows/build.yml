@@ -3,17 +3,39 @@ name: Pro APK Builder
 on:
   workflow_dispatch:
     inputs:
-      id: { required: true }
-      appName: { required: true }
-      packageName: { required: true }
-      versionCode: { required: true }
-      versionName: { required: true }
-      iconUrl: { required: true }
-      webhookUrl: { required: true }
-      logUrl: { required: true }
-      mode: { required: true }
-      url: { required: false }
-      projectZip: { required: false }
+      id:
+        required: true
+        type: string
+      appName:
+        required: true
+        type: string
+      packageName:
+        required: true
+        type: string
+      versionCode:
+        required: true
+        type: string
+      versionName:
+        required: true
+        type: string
+      iconUrl:
+        required: true
+        type: string
+      webhookUrl:
+        required: true
+        type: string
+      logUrl:
+        required: true
+        type: string
+      mode:
+        required: true
+        type: string
+      url:
+        required: false
+        type: string
+      projectZip:
+        required: false
+        type: string
 
 permissions:
   contents: write
