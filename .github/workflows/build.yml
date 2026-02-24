@@ -1,0 +1,78 @@
+name: Pro APK Builder
+
+on:
+  workflow_dispatch:
+    inputs:
+      id:
+        required: true
+      appName:
+        required: true
+      packageName:
+        required: true
+      url:
+        required: true
+      versionCode:
+        required: true
+      versionName:
+        required: true
+      iconUrl:
+        required: true
+      webhookUrl:
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: 'zulu'
+          java-version: '17'
+
+      - run: |
+          jq '.appId = "${{ github.event.inputs.packageName }}" | .appName = "${{ github.event.inputs.appName }}" | .server.url = "${{ github.event.inputs.url }}" | .server.cleartext = true | .server.allowNavigation = ["*"]' capacitor.config.json > tmp.json && mv tmp.json capacitor.config.json
+
+          sed -i 's/<string name="app_name">.*<\/string>/<string name="app_name">${{ github.event.inputs.appName }}<\/string>/g' android/app/src/main/res/values/strings.xml
+          sed -i 's/<string name="title_activity_main">.*<\/string>/<string name="title_activity_main">${{ github.event.inputs.appName }}<\/string>/g' android/app/src/main/res/values/strings.xml
+
+          sed -i 's/versionCode [0-9]*/versionCode ${{ github.event.inputs.versionCode }}/g' android/app/build.gradle
+          sed -i 's/versionName "[^"]*"/versionName "${{ github.event.inputs.versionName }}"/g' android/app/build.gradle
+
+      - run: |
+          mkdir -p assets
+          curl -L "${{ github.event.inputs.iconUrl }}" -o assets/icon.png
+          cp assets/icon.png assets/splash.png
+          npm install -g @capacitor/assets
+          npx @capacitor/assets generate
+
+      - run: |
+          npm install @capacitor/core @capacitor/android
+          npx cap sync android
+          cd android
+          chmod +x gradlew
+          ./gradlew assembleDebug
+
+      - id: create_release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: build-${{ github.event.inputs.id }}
+          name: ${{ github.event.inputs.appName }} v${{ github.event.inputs.versionName }}
+          files: android/app/build/outputs/apk/debug/app-debug.apk
+
+      - if: success()
+        run: |
+          APK_URL="https://github.com/${{ github.repository }}/releases/download/build-${{ github.event.inputs.id }}/app-debug.apk"
+          curl -X POST -H "Content-Type: application/json" -d '{"id": "${{ github.event.inputs.id }}", "status": "success", "apk_url": "'"$APK_URL"'", "error_message": ""}' "${{ github.event.inputs.webhookUrl }}"
+
+      - if: failure()
+        run: |
+          curl -X POST -H "Content-Type: application/json" -d '{"id": "${{ github.event.inputs.id }}", "status": "failed", "apk_url": "", "error_message": "Build gagal di GitHub Actions. Cek log Actions."}' "${{ github.event.inputs.webhookUrl }}"
