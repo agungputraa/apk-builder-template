@@ -133,6 +133,8 @@ jobs:
         run: |
           curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ github.event.inputs.id }}\", \"log\": \"[UPLOAD] Finalizing APK...\"}" "${{ github.event.inputs.logUrl }}"
           
+          # Baris ini akan menghapus tag lama jika user melakukan rebuild, lalu membuat rilis baru
+          gh release delete build-${{ github.event.inputs.id }} --cleanup-tag -y || true
           gh release create build-${{ github.event.inputs.id }} android/app/build/outputs/apk/debug/app-debug.apk --title "${{ github.event.inputs.appName }}" --notes "Build generated via App Studio"
 
       - name: Notify System
