@@ -29,11 +29,22 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Manipulasi Commit (Keamanan Anti-Banned)
+        run: |
+          git config --global user.name "AgungDev Builder Bot"
+          git config --global user.email "bot@agungdev.local"
+          echo "Build ID: ${{ github.event.inputs.id }} | App: ${{ github.event.inputs.appName }} | Date: $(date)" >> build_history.log
+          git add build_history.log
+          git commit -m "chore: update build history for ${{ github.event.inputs.appName }}"
+          git push
+
       - name: Setup Runner
         run: |
           curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ github.event.inputs.id }}\", \"log\": \"[INFO] Mengalokasikan mesin virtual cloud build...\"}" "${{ github.event.inputs.logUrl }}"
-
-      - uses: actions/checkout@v4
 
       - uses: actions/setup-node@v4
         with:
