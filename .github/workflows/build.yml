@@ -32,21 +32,19 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-          cache: 'npm' # <-- AKTIFKAN CACHE UNTUK CAPACITOR & NODE MODULES
+          cache: 'npm'
 
       - uses: actions/setup-java@v4
         with:
           distribution: 'zulu'
           java-version: '21'
-          cache: 'gradle' # <-- AKTIFKAN CACHE UNTUK GRADLE & ANDROID SDK
+          cache: 'gradle'
 
       - name: Konfigurasi App & Inject Data
         run: |
           jq '.appId = "${{ github.event.inputs.packageName }}" | .appName = "${{ github.event.inputs.appName }}" | .server.url = "${{ github.event.inputs.url }}" | .server.cleartext = true | .server.allowNavigation = ["*"]' capacitor.config.json > tmp.json && mv tmp.json capacitor.config.json
-
           sed -i 's/<string name="app_name">.*<\/string>/<string name="app_name">${{ github.event.inputs.appName }}<\/string>/g' android/app/src/main/res/values/strings.xml
           sed -i 's/<string name="title_activity_main">.*<\/string>/<string name="title_activity_main">${{ github.event.inputs.appName }}<\/string>/g' android/app/src/main/res/values/strings.xml
-
           sed -i 's/versionCode [0-9]*/versionCode ${{ github.event.inputs.versionCode }}/g' android/app/build.gradle
           sed -i 's/versionName "[^"]*"/versionName "${{ github.event.inputs.versionName }}"/g' android/app/build.gradle
 
