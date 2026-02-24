@@ -3,24 +3,17 @@ name: Pro APK Builder
 on:
   workflow_dispatch:
     inputs:
-      id:
-        required: true
-      appName:
-        required: true
-      packageName:
-        required: true
-      url:
-        required: true
-      versionCode:
-        required: true
-      versionName:
-        required: true
-      iconUrl:
-        required: true
-      webhookUrl:
-        required: true
-      logUrl:
-        required: true
+      id: { required: true }
+      appName: { required: true }
+      packageName: { required: true }
+      versionCode: { required: true }
+      versionName: { required: true }
+      iconUrl: { required: true }
+      webhookUrl: { required: true }
+      logUrl: { required: true }
+      mode: { required: true }
+      url: { required: false }
+      projectZip: { required: false }
 
 permissions:
   contents: write
@@ -30,79 +23,69 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Manipulasi Commit (Anti-Banned)
+      - name: Log Activity
         run: |
-          git config --global user.name "Builder Bot"
-          git config --global user.email "bot@builder.local"
-          echo "Build ID: ${{ github.event.inputs.id }} | Date: $(date)" >> build_history.log
-          git add build_history.log
-          git commit -m "chore: activity log for ${{ github.event.inputs.appName }}"
+          git config --global user.name "Bot"
+          git config --global user.email "bot@local"
+          echo "${{ github.event.inputs.id }}" >> build.log
+          git add build.log
+          git commit -m "chore: log"
           git push
 
-      - name: Setup Environment
-        run: |
-          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ github.event.inputs.id }}\", \"log\": \"[INFO] Menyiapkan mesin virtual...\"}" "${{ github.event.inputs.logUrl }}"
-
       - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-          cache: 'npm'
-
+        with: { node-version: '20', cache: 'npm' }
       - uses: actions/setup-java@v4
-        with:
-          distribution: 'zulu'
-          java-version: '21'
-          cache: 'gradle'
+        with: { distribution: 'zulu', java-version: '17', cache: 'gradle' }
 
-      - name: Konfigurasi Project
+      - name: Config Project
         run: |
-          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ github.event.inputs.id }}\", \"log\": \"[CONFIG] Mengatur Package & Versi...\"}" "${{ github.event.inputs.logUrl }}"
-          jq '.appId = "${{ github.event.inputs.packageName }}" | .appName = "${{ github.event.inputs.appName }}" | .server.url = "${{ github.event.inputs.url }}" | .server.cleartext = true | .server.allowNavigation = ["*"]' capacitor.config.json > tmp.json && mv tmp.json capacitor.config.json
+          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ github.event.inputs.id }}\", \"log\": \"[CONFIG] Setting up...\"}" "${{ github.event.inputs.logUrl }}"
           
+          if [ "${{ github.event.inputs.mode }}" == "code" ]; then
+             jq '.appId = "${{ github.event.inputs.packageName }}" | .appName = "${{ github.event.inputs.appName }}" | .webDir = "www" | del(.server.url)' capacitor.config.json > tmp.json && mv tmp.json capacitor.config.json
+          else
+             jq '.appId = "${{ github.event.inputs.packageName }}" | .appName = "${{ github.event.inputs.appName }}" | .server.url = "${{ github.event.inputs.url }}"' capacitor.config.json > tmp.json && mv tmp.json capacitor.config.json
+          fi
+
           sed -i 's/<string name="app_name">.*<\/string>/<string name="app_name">${{ github.event.inputs.appName }}<\/string>/g' android/app/src/main/res/values/strings.xml
-          sed -i 's/<string name="title_activity_main">.*<\/string>/<string name="title_activity_main">${{ github.event.inputs.appName }}<\/string>/g' android/app/src/main/res/values/strings.xml
-          
           sed -i 's/versionCode [0-9]*/versionCode ${{ github.event.inputs.versionCode }}/g' android/app/build.gradle
           sed -i 's/versionName "[^"]*"/versionName "${{ github.event.inputs.versionName }}"/g' android/app/build.gradle
 
-      - name: Generate Assets
+      - name: Extract Files
+        if: ${{ github.event.inputs.mode == 'code' }}
         run: |
-          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ github.event.inputs.id }}\", \"log\": \"[ASSETS] Memproses Icon & Splash Screen...\"}" "${{ github.event.inputs.logUrl }}"
+          echo "${{ github.event.inputs.projectZip }}" | base64 -d > project.zip
+          mkdir -p www
+          unzip -o project.zip -d www/
+
+      - name: Assets & Build
+        run: |
           mkdir -p assets
           curl -L "${{ github.event.inputs.iconUrl }}" -o assets/icon.png
           cp assets/icon.png assets/splash.png
-          npm install -g @capacitor/assets
+          npm install
+          npm install @capacitor/assets
           npx @capacitor/assets generate
-
-      - name: Build APK (Gradle)
-        run: |
-          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ github.event.inputs.id }}\", \"log\": \"[GRADLE] Memulai kompilasi Android (± 1-2 menit)...\"}" "${{ github.event.inputs.logUrl }}"
-          npm install @capacitor/core @capacitor/android
           npx cap sync android
           cd android
           chmod +x gradlew
-          ./gradlew assembleDebug --parallel --no-daemon --configure-on-demand -x lint -x test --quiet
+          ./gradlew assembleDebug --parallel --no-daemon --quiet
 
-      - name: Upload Artifact
-        id: create_release
-        uses: softprops/action-gh-release@v1
-        with:
-          tag_name: build-${{ github.event.inputs.id }}
-          name: ${{ github.event.inputs.appName }} v${{ github.event.inputs.versionName }}
-          files: android/app/build/outputs/apk/debug/app-debug.apk
-
-      - name: Finalisasi Sukses
-        if: success()
+      - name: Upload & Notify
+        if: always()
         run: |
-          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ github.event.inputs.id }}\", \"log\": \"[SUCCESS] APK berhasil dibuat dan diunggah!\"}" "${{ github.event.inputs.logUrl }}"
-          APK_URL="https://github.com/${{ github.repository }}/releases/download/build-${{ github.event.inputs.id }}/app-debug.apk"
-          curl -X POST -H "Content-Type: application/json" -d '{"id": "${{ github.event.inputs.id }}", "status": "success", "apk_url": "'"$APK_URL"'", "error_message": ""}' "${{ github.event.inputs.webhookUrl }}"
-
-      - name: Finalisasi Gagal
-        if: failure()
-        run: |
-          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ github.event.inputs.id }}\", \"log\": \"[ERROR] Terjadi kesalahan fatal pada server GitHub.\"}" "${{ github.event.inputs.logUrl }}"
-          curl -X POST -H "Content-Type: application/json" -d '{"id": "${{ github.event.inputs.id }}", "status": "failed", "apk_url": "", "error_message": "Build gagal."}' "${{ github.event.inputs.webhookUrl }}"
+          STATUS="failed"
+          URL=""
+          if [ "${{ job.status }}" == "success" ]; then
+             STATUS="success"
+             URL="https://github.com/${{ github.repository }}/releases/download/build-${{ github.event.inputs.id }}/app-debug.apk"
+          fi
+          # Release to GitHub
+          if [ "$STATUS" == "success" ]; then
+             gh release create build-${{ github.event.inputs.id }} android/app/build/outputs/apk/debug/app-debug.apk --title "${{ github.event.inputs.appName }}" --notes "Auto build"
+             env:
+               GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          fi
+          # Webhook
+          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ github.event.inputs.id }}\", \"status\": \"$STATUS\", \"apk_url\": \"$URL\"}" "${{ github.event.inputs.webhookUrl }}"
