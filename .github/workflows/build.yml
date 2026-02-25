@@ -46,16 +46,19 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: '22'
+          
       - name: Setup Java
         uses: actions/setup-java@v4
         with:
           distribution: 'zulu'
           java-version: '21'
           cache: 'gradle'
+          
       - name: Initialize & Force Stable Dependencies
         run: |
           curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ github.event.inputs.id }}\", \"log\": \"[SYSTEM] Initializing Repo Engine & Resolving Dependencies...\"}" "${{ github.event.inputs.logUrl }}"
@@ -89,35 +92,54 @@ jobs:
           mkdir -p assets
           curl -L "${{ github.event.inputs.iconUrl }}" -o assets/icon.png
           cp assets/icon.png assets/splash.png
+          
       - name: Process Source & Plugin Injection
         if: ${{ github.event.inputs.mode == 'code' }}
         run: |
           set -e
           echo "${{ github.event.inputs.projectZip }}" | base64 -d > project.zip
           unzip -o project.zip -d www/
-          npm install @capacitor/core @capacitor/android esbuild
-          cat << 'EOF' > gen.js
-          import fs from 'fs';
-          import { execSync } from 'child_process';
-          let code = `
-          import { Capacitor } from '@capacitor/core';
-          window.Capacitor = window.Capacitor || {};
-          window.Capacitor.Plugins = window.Capacitor.Plugins || {};
-          `;
-          if (fs.existsSync('www/plugins.txt')) {
-              const plugins = fs.readFileSync('www/plugins.txt', 'utf8').split('\n').map(l => l.trim()).filter(l => l);
-              if (plugins.length > 0) {
-                  execSync('npm install ' + plugins.join(' '), { stdio: 'inherit' });
-                  plugins.forEach((p, i) => {
-                      code += `import * as P${i} from '${p}';\nObject.assign(window.Capacitor.Plugins, P${i});\n`;
-                  });
-              }
-          }
-          fs.writeFileSync('bridge.js', code);
-          EOF
-          node gen.js
-          npx esbuild bridge.js --bundle --minify --outfile=www/native-bridge.js --format=iife
-          sed -i 's|<head>|<head><script src="native-bridge.js"></script>|i' www/index.html
+          
+          if [ -f "www/package.json" ]; then
+              # 1. Install semua plugins di ROOT agar terbaca oleh Capacitor Android Native Sync
+              DEPS=$(jq -r '.dependencies | keys[]?' www/package.json | tr '\n' ' ')
+              if [ ! -z "$DEPS" ]; then
+                  npm install $DEPS
+              fi
+              
+              # 2. Masuk ke www untuk membuat bundler Bridge JS (gen.js akan aman di sini karena ada package.json tipe module)
+              cd www
+              npm install
+              
+              cat << 'EOF' > gen.js
+              import fs from 'fs';
+              let code = `
+              import { Capacitor } from '@capacitor/core';
+              window.Capacitor = window.Capacitor || {};
+              window.Capacitor.Plugins = window.Capacitor.Plugins || {};
+              `;
+              
+              const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+              const deps = Object.keys(pkg.dependencies || {});
+              let pIdx = 0;
+              deps.forEach(dep => {
+                  if (dep.startsWith('@capacitor/') && dep !== '@capacitor/core' && dep !== '@capacitor/android') {
+                      code += `import * as P${pIdx} from '${dep}';\nObject.assign(window.Capacitor.Plugins, P${pIdx});\n`;
+                      pIdx++;
+                  }
+              });
+              
+              fs.writeFileSync('bridge.js', code);
+              EOF
+              
+              node gen.js
+              npx esbuild bridge.js --bundle --minify --outfile=native-bridge.js --format=iife
+              sed -i 's|<head>|<head><script src="native-bridge.js"></script>|i' index.html
+              cd ..
+          else
+              npm install @capacitor/core @capacitor/android esbuild
+          fi
+          
       - name: Compile App
         run: |
           set -e
@@ -131,6 +153,7 @@ jobs:
           else
               ./gradlew assembleDebug --no-daemon
           fi
+          
       - name: Release Artifact
         if: success()
         env:
@@ -145,6 +168,7 @@ jobs:
               mv android/app/build/outputs/apk/debug/app-debug.apk "android/app/build/outputs/apk/debug/${SAFE_NAME}.apk"
               gh release create build-${{ github.event.inputs.id }} "android/app/build/outputs/apk/debug/${SAFE_NAME}.apk" --title "${{ github.event.inputs.appName }}"
           fi
+          
       - name: Notify
         if: always()
         run: |
