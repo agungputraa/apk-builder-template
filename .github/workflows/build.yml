@@ -46,36 +46,37 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup Node (Updated to v22)
+      - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: '22' # WAJIB 22 UNTUK CAPACITOR TERBARU
+          node-version: '22'
 
       - name: Setup Java
         uses: actions/setup-java@v4
         with:
           distribution: 'zulu'
-          java-version: '17'
+          java-version: '21'
           cache: 'gradle'
 
       - name: Initialize & Setup Config
         run: |
-          # 1. Notify System
           curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ github.event.inputs.id }}\", \"log\": \"[SYSTEM] Initializing Build Process...\"}" "${{ github.event.inputs.logUrl }}"
           
-          # 2. Setup Capacitor Config
           if [ "${{ github.event.inputs.mode }}" == "code" ]; then
              jq '.appId = "${{ github.event.inputs.packageName }}" | .appName = "${{ github.event.inputs.appName }}" | .webDir = "www" | del(.server.url)' capacitor.config.json > tmp.json && mv tmp.json capacitor.config.json
           else
              jq '.appId = "${{ github.event.inputs.packageName }}" | .appName = "${{ github.event.inputs.appName }}" | .server.url = "${{ github.event.inputs.url }}"' capacitor.config.json > tmp.json && mv tmp.json capacitor.config.json
           fi
 
-          # 3. Update Android Resources
           sed -i 's/<string name="app_name">.*<\/string>/<string name="app_name">${{ github.event.inputs.appName }}<\/string>/g' android/app/src/main/res/values/strings.xml
           sed -i 's/versionCode [0-9]*/versionCode ${{ github.event.inputs.versionCode }}/g' android/app/build.gradle
           sed -i 's/versionName "[^"]*"/versionName "${{ github.event.inputs.versionName }}"/g' android/app/build.gradle
           
-          # 4. Setup Icons
+          # FIX: Downgrade Versions to Stable to prevent Build Failures
+          sed -i 's/compileSdkVersion = 36/compileSdkVersion = 34/g' android/variables.gradle
+          sed -i 's/targetSdkVersion = 36/targetSdkVersion = 34/g' android/variables.gradle
+          sed -i 's/gradle:8.13.0/gradle:8.2.1/g' android/build.gradle
+
           mkdir -p assets
           curl -L "${{ github.event.inputs.iconUrl }}" -o assets/icon.png
           cp assets/icon.png assets/splash.png
@@ -94,15 +95,12 @@ jobs:
           mkdir -p build_env
           cd build_env
           
-          # Create minimal package.json
           echo '{"name": "native-builder","type":"module","dependencies":{"@capacitor/core":"latest","@capacitor/android":"latest","esbuild":"latest"}}' > package.json
           
-          # Install Base Dependencies
           npm install
           
           echo ">>> Generating Bridge Script (via Node.js)..."
           
-          # --- SCRIPT GENERATOR ---
           cat << 'EOF' > generate_bridge.js
           import fs from 'fs';
           import { execSync } from 'child_process';
@@ -139,9 +137,7 @@ jobs:
           fs.writeFileSync('bridge.js', bridgeContent);
           console.log('Bridge generated successfully.');
           EOF
-          # ------------------------
           
-          # Jalankan Script Generator
           node generate_bridge.js
           
           echo ">>> Bundling Native Bridge..."
