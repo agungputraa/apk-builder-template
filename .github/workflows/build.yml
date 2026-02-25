@@ -93,6 +93,21 @@ jobs:
           mkdir -p www
           unzip -o project.zip -d www/
 
+      - name: Install Dependencies & Build Web (NPM)
+        if: ${{ github.event.inputs.mode == 'code' }}
+        run: |
+          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ github.event.inputs.id }}\", \"log\": \"[BUILD] Resolving NPM Dependencies...\"}" "${{ github.event.inputs.logUrl }}"
+          cd www
+          if [ -f "package.adev.json" ]; then
+             mv package.adev.json package.json
+             npm install --prefer-offline --no-audit
+             if jq -e '.scripts.build' package.json > /dev/null; then
+                 curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ github.event.inputs.id }}\", \"log\": \"[BUILD] Compiling Web Assets...\"}" "${{ github.event.inputs.logUrl }}"
+                 npm run build
+             fi
+          fi
+          cd ..
+
       - name: Generate Assets
         run: |
           curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ github.event.inputs.id }}\", \"log\": \"[BUILD] Processing Assets & Icons...\"}" "${{ github.event.inputs.logUrl }}"
