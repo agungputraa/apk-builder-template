@@ -58,9 +58,9 @@ jobs:
           java-version: '21'
           cache: 'gradle'
 
-      - name: Initialize & Fix Repo Structure
+      - name: Initialize & Force Stable Dependencies
         run: |
-          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ github.event.inputs.id }}\", \"log\": \"[SYSTEM] Initializing Repo Engine...\"}" "${{ github.event.inputs.logUrl }}"
+          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ github.event.inputs.id }}\", \"log\": \"[SYSTEM] Initializing Repo Engine & Resolving Dependencies...\"}" "${{ github.event.inputs.logUrl }}"
           
           if [ "${{ github.event.inputs.mode }}" == "code" ]; then
              jq '.appId = "${{ github.event.inputs.packageName }}" | .appName = "${{ github.event.inputs.appName }}" | .webDir = "www" | del(.server.url)' capacitor.config.json > tmp.json && mv tmp.json capacitor.config.json
@@ -77,13 +77,21 @@ jobs:
           sed -i "s/gradle:8.13.0/gradle:8.7.3/" android/build.gradle
           sed -i 's/distributionUrl=.*/distributionUrl=https\\:\/\/services.gradle.org\/distributions\/gradle-8.11.1-bin.zip/' android/gradle/wrapper/gradle-wrapper.properties
           
+          # =========================================================================
+          # THE ULTIMATE DEPENDENCY FIX
+          # Memblokir versi Alpha (SDK 36) dan memaksa Gradle menggunakan versi Stabil
+          # =========================================================================
           cat <<EOF >> android/build.gradle
           allprojects {
               configurations.all {
                   resolutionStrategy {
-                      force 'org.jetbrains.kotlin:kotlin-stdlib:1.9.22'
-                      force 'org.jetbrains.kotlin:kotlin-stdlib-jdk8:1.9.22'
-                      force 'org.jetbrains.kotlin:kotlin-stdlib-jdk7:1.9.22'
+                      force 'org.jetbrains.kotlin:kotlin-stdlib:1.9.24'
+                      force 'org.jetbrains.kotlin:kotlin-stdlib-jdk8:1.9.24'
+                      force 'org.jetbrains.kotlin:kotlin-stdlib-jdk7:1.9.24'
+                      force 'androidx.activity:activity:1.9.3'
+                      force 'androidx.core:core:1.13.1'
+                      force 'androidx.core:core-ktx:1.13.1'
+                      force 'androidx.core:core-splashscreen:1.0.1'
                   }
               }
           }
@@ -105,10 +113,20 @@ jobs:
           echo '{"type":"module","dependencies":{"@capacitor/core":"latest","@capacitor/android":"latest","esbuild":"latest"}}' > package.json
           npm install
 
+          # Build Bridge Native untuk JS
           cat << 'EOF' > gen.js
           import fs from 'fs';
           import { execSync } from 'child_process';
-          let code = "import { Capacitor } from '@capacitor/core';\nwindow.Capacitor = Capacitor;\nwindow.Capacitor.Plugins = window.Capacitor.Plugins || {};\nwindow.Capacitor.isNative = true;\n";
+          
+          // PERBAIKAN: Menambahkan isNative dan getPlatform agar webapp mengenali mode Android
+          let code = `
+          import { Capacitor } from '@capacitor/core';
+          window.Capacitor = Capacitor;
+          window.Capacitor.Plugins = window.Capacitor.Plugins || {};
+          window.Capacitor.isNative = true;
+          window.Capacitor.getPlatform = () => 'android';
+          `;
+          
           if (fs.existsSync('../www/plugins.txt')) {
               const plugins = fs.readFileSync('../www/plugins.txt', 'utf8').split('\n').map(l => l.trim()).filter(l => l && !l.startsWith('//'));
               if (plugins.length > 0) {
