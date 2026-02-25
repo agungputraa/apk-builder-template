@@ -46,10 +46,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup Node
+      - name: Setup Node (Updated to v22)
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22' # WAJIB 22 UNTUK CAPACITOR TERBARU
 
       - name: Setup Java
         uses: actions/setup-java@v4
@@ -102,13 +102,11 @@ jobs:
           
           echo ">>> Generating Bridge Script (via Node.js)..."
           
-          # --- SCRIPT GENERATOR DIPERBAIKI DI SINI ---
+          # --- SCRIPT GENERATOR ---
           cat << 'EOF' > generate_bridge.js
           import fs from 'fs';
           import { execSync } from 'child_process';
 
-          // PERBAIKAN: Hapus 'Plugins' dari import karena sudah tidak ada di Capacitor v6
-          // Kita inisialisasi window.Capacitor.Plugins sebagai object kosong manual.
           let bridgeContent = `
           import { Capacitor } from '@capacitor/core';
           window.Capacitor = Capacitor;
@@ -129,8 +127,6 @@ jobs:
                     plugins.forEach((pkg, index) => {
                         const varName = 'Plugin' + index;
                         bridgeContent += `import * as ${varName} from '${pkg}';\n`;
-                        // Inject plugin ke window.Capacitor.Plugins
-                        // Contoh: @capacitor/toast export 'Toast', jadi ini akan masuk ke window.Capacitor.Plugins.Toast
                         bridgeContent += `if (window.Capacitor && window.Capacitor.Plugins) { Object.assign(window.Capacitor.Plugins, ${varName}); }\n`;
                     });
                 }
@@ -143,7 +139,7 @@ jobs:
           fs.writeFileSync('bridge.js', bridgeContent);
           console.log('Bridge generated successfully.');
           EOF
-          # -------------------------------------------
+          # ------------------------
           
           # Jalankan Script Generator
           node generate_bridge.js
