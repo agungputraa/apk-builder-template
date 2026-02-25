@@ -3,17 +3,39 @@ name: Pro APK Builder
 on:
   workflow_dispatch:
     inputs:
-      id: { required: true, type: string }
-      appName: { required: true, type: string }
-      packageName: { required: true, type: string }
-      versionCode: { required: true, type: string }
-      versionName: { required: true, type: string }
-      iconUrl: { required: true, type: string }
-      webhookUrl: { required: true, type: string }
-      logUrl: { required: true, type: string }
-      mode: { required: true, type: string }
-      url: { required: false, type: string }
-      projectZip: { required: false, type: string }
+      id:
+        required: true
+        type: string
+      appName:
+        required: true
+        type: string
+      packageName:
+        required: true
+        type: string
+      versionCode:
+        required: true
+        type: string
+      versionName:
+        required: true
+        type: string
+      iconUrl:
+        required: true
+        type: string
+      webhookUrl:
+        required: true
+        type: string
+      logUrl:
+        required: true
+        type: string
+      mode:
+        required: true
+        type: string
+      url:
+        required: false
+        type: string
+      projectZip:
+        required: false
+        type: string
 
 permissions:
   contents: write
@@ -36,75 +58,103 @@ jobs:
           java-version: '21'
           cache: 'gradle'
 
-      - name: Initialize & Stabilize
+      - name: Initialize & Fix Repo Structure
         run: |
-          # Setup Capacitor Config
+          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ github.event.inputs.id }}\", \"log\": \"[SYSTEM] Initializing Repo Engine...\"}" "${{ github.event.inputs.logUrl }}"
+          
           if [ "${{ github.event.inputs.mode }}" == "code" ]; then
              jq '.appId = "${{ github.event.inputs.packageName }}" | .appName = "${{ github.event.inputs.appName }}" | .webDir = "www" | del(.server.url)' capacitor.config.json > tmp.json && mv tmp.json capacitor.config.json
           else
              jq '.appId = "${{ github.event.inputs.packageName }}" | .appName = "${{ github.event.inputs.appName }}" | .server.url = "${{ github.event.inputs.url }}"' capacitor.config.json > tmp.json && mv tmp.json capacitor.config.json
           fi
 
-          # Fix Versions
+          sed -i 's/<string name="app_name">.*<\/string>/<string name="app_name">${{ github.event.inputs.appName }}<\/string>/g' android/app/src/main/res/values/strings.xml
+          sed -i 's/versionCode [0-9]*/versionCode ${{ github.event.inputs.versionCode }}/g' android/app/build.gradle
+          sed -i 's/versionName "[^"]*"/versionName "${{ github.event.inputs.versionName }}"/g' android/app/build.gradle
+          
           sed -i "s/compileSdkVersion = .*/compileSdkVersion = 35/" android/variables.gradle
           sed -i "s/targetSdkVersion = .*/targetSdkVersion = 35/" android/variables.gradle
           sed -i "s/gradle:8.13.0/gradle:8.7.3/" android/build.gradle
           sed -i 's/distributionUrl=.*/distributionUrl=https\\:\/\/services.gradle.org\/distributions\/gradle-8.11.1-bin.zip/' android/gradle/wrapper/gradle-wrapper.properties
+          
+          cat <<EOF >> android/build.gradle
+          allprojects {
+              configurations.all {
+                  resolutionStrategy {
+                      force 'org.jetbrains.kotlin:kotlin-stdlib:1.9.22'
+                      force 'org.jetbrains.kotlin:kotlin-stdlib-jdk8:1.9.22'
+                      force 'org.jetbrains.kotlin:kotlin-stdlib-jdk7:1.9.22'
+                  }
+              }
+          }
+          EOF
 
-      - name: Prepare Source & Build Native Bridge
+          mkdir -p assets
+          curl -L "${{ github.event.inputs.iconUrl }}" -o assets/icon.png
+          cp assets/icon.png assets/splash.png
+
+      - name: Process Source & Plugin Injection
+        if: ${{ github.event.inputs.mode == 'code' }}
         run: |
           set -e
-          # Jika mode code, extract zip. Jika tidak, gunakan file dari repo
-          if [ "${{ github.event.inputs.mode }}" == "code" ]; then
-             echo "${{ github.event.inputs.projectZip }}" | base64 -d > project.zip
-             unzip -o project.zip -d www/
-          fi
+          echo "${{ github.event.inputs.projectZip }}" | base64 -d > project.zip
+          unzip -o project.zip -d www/
           
-          mkdir -p build_env && cd build_env
+          mkdir -p builder_tmp
+          cd builder_tmp
           echo '{"type":"module","dependencies":{"@capacitor/core":"latest","@capacitor/android":"latest","esbuild":"latest"}}' > package.json
           npm install
-          
-          # Buat Bridge yang memaksa isNative = true agar logic Anda jalan
-          cat << 'EOF' > generate_bridge.js
+
+          cat << 'EOF' > gen.js
           import fs from 'fs';
           import { execSync } from 'child_process';
-          let bridge = "import { Capacitor } from '@capacitor/core';\n";
-          bridge += "window.Capacitor = Capacitor;\n";
-          bridge += "window.Capacitor.isNative = true;\n"; // PAKSA TRUE
-          bridge += "window.Capacitor.Plugins = window.Capacitor.Plugins || {};\n";
-
+          let code = "import { Capacitor } from '@capacitor/core';\nwindow.Capacitor = Capacitor;\nwindow.Capacitor.Plugins = window.Capacitor.Plugins || {};\nwindow.Capacitor.isNative = true;\n";
           if (fs.existsSync('../www/plugins.txt')) {
               const plugins = fs.readFileSync('../www/plugins.txt', 'utf8').split('\n').map(l => l.trim()).filter(l => l && !l.startsWith('//'));
               if (plugins.length > 0) {
                   execSync('npm install ' + plugins.join(' '), { stdio: 'inherit' });
-                  plugins.forEach((pkg, i) => {
-                      const name = pkg.split('/').pop().replace(/-/g, '_');
-                      bridge += `import * as P${i} from '${pkg}';\nObject.assign(window.Capacitor.Plugins, P${i});\n`;
+                  plugins.forEach((p, i) => {
+                      code += `import * as P${i} from '${p}';\nObject.assign(window.Capacitor.Plugins, P${i});\n`;
                   });
               }
           }
-          fs.writeFileSync('bridge.js', bridge);
+          fs.writeFileSync('bridge.js', code);
           EOF
-          
-          node generate_bridge.js
+
+          node gen.js
           npx esbuild bridge.js --bundle --minify --outfile=../www/native-bridge.js --format=iife
-          cd ..
           
-          # Inject script ke index.html paling atas
+          cd ..
           sed -i 's|<head>|<head><script src="native-bridge.js"></script>|i' www/index.html
 
-      - name: Build Android APK
+      - name: Compile APK
         run: |
-          npm install @capacitor/assets --no-audit
-          npx @capacitor/assets generate --iconBackgroundColor '#ffffff'
+          set -e
+          npm install @capacitor/assets @capacitor/cli
+          npx @capacitor/assets generate --iconBackgroundColor '#ffffff' --splashBackgroundColor '#ffffff'
           npx cap sync android
-          cd android && chmod +x gradlew
+          cd android
+          chmod +x gradlew
           ./gradlew assembleDebug --no-daemon
 
-      - name: Release & Notify
-        env: { GH_TOKEN: ${{ secrets.GITHUB_TOKEN }} }
+      - name: Release Artifact
+        if: success()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           SAFE_NAME=$(echo "${{ github.event.inputs.appName }}" | tr ' ' '_')
           mv android/app/build/outputs/apk/debug/app-debug.apk "android/app/build/outputs/apk/debug/${SAFE_NAME}.apk"
-          gh release create build-${{ github.event.inputs.id }} "android/app/build/outputs/apk/debug/${SAFE_NAME}.apk" --title "${{ github.event.inputs.appName }}"
-          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ github.event.inputs.id }}\", \"status\": \"success\", \"apk_url\": \"https://github.com/${{ github.repository }}/releases/download/build-${{ github.event.inputs.id }}/${SAFE_NAME}.apk\"}" "${{ github.event.inputs.webhookUrl }}"
+          gh release delete build-${{ github.event.inputs.id }} --cleanup-tag -y || true
+          gh release create build-${{ github.event.inputs.id }} "android/app/build/outputs/apk/debug/${SAFE_NAME}.apk" --title "${{ github.event.inputs.appName }}" --notes "Build dari Repository Template"
+
+      - name: Notify
+        if: always()
+        run: |
+          STATUS="failed"
+          APK=""
+          if [ "${{ job.status }}" == "success" ]; then
+             STATUS="success"
+             SAFE_NAME=$(echo "${{ github.event.inputs.appName }}" | tr ' ' '_')
+             APK="https://github.com/${{ github.repository }}/releases/download/build-${{ github.event.inputs.id }}/${SAFE_NAME}.apk"
+          fi
+          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ github.event.inputs.id }}\", \"status\": \"$STATUS\", \"apk_url\": \"$APK\"}" "${{ github.event.inputs.webhookUrl }}"
