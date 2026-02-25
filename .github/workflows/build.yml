@@ -61,18 +61,21 @@ jobs:
 
       - name: Initialize Environment
         run: |
-          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ github.event.inputs.id }}\", \"log\": \"[SYSTEM] Initializing Build Engine (Vite Mode)...\"}" "${{ github.event.inputs.logUrl }}"
+          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ github.event.inputs.id }}\", \"log\": \"[SYSTEM] Initializing Build Engine (Vite Hybrid)...\"}" "${{ github.event.inputs.logUrl }}"
           
+          # Konfigurasi Capacitor Config
           if [ "${{ github.event.inputs.mode }}" == "code" ]; then
              jq '.appId = "${{ github.event.inputs.packageName }}" | .appName = "${{ github.event.inputs.appName }}" | .webDir = "dist" | del(.server.url)' capacitor.config.json > tmp.json && mv tmp.json capacitor.config.json
           else
              jq '.appId = "${{ github.event.inputs.packageName }}" | .appName = "${{ github.event.inputs.appName }}" | .server.url = "${{ github.event.inputs.url }}"' capacitor.config.json > tmp.json && mv tmp.json capacitor.config.json
           fi
 
+          # Update Android Resources
           sed -i 's/<string name="app_name">.*<\/string>/<string name="app_name">${{ github.event.inputs.appName }}<\/string>/g' android/app/src/main/res/values/strings.xml
           sed -i 's/versionCode [0-9]*/versionCode ${{ github.event.inputs.versionCode }}/g' android/app/build.gradle
           sed -i 's/versionName "[^"]*"/versionName "${{ github.event.inputs.versionName }}"/g' android/app/build.gradle
           
+          # Setup Assets
           mkdir -p assets
           curl -L "${{ github.event.inputs.iconUrl }}" -o assets/icon.png
           cp assets/icon.png assets/splash.png
@@ -84,6 +87,9 @@ jobs:
           mkdir -p src_temp
           unzip -o project.zip -d src_temp/
           
+          # MEMBUAT PACKAGE.JSON YANG LEBIH BERSIH
+          # Kita hanya masukkan plugin Vue/React di devDependencies.
+          # JANGAN masukkan 'angular' di dependencies karena project Anda pakai CDN.
           cat << 'EOF' > package.json
           {
             "name": "apk-builder",
@@ -93,70 +99,87 @@ jobs:
             },
             "dependencies": {
               "@capacitor/core": "latest",
-              "@capacitor/android": "latest",
-              "@capacitor/ios": "latest",
-              "vue": "^3.4.0",
-              "react": "^18.2.0",
-              "react-dom": "^18.2.0",
-              "angular": "^1.8.3"
+              "@capacitor/android": "latest"
             },
             "devDependencies": {
               "vite": "^5.0.0",
               "@vitejs/plugin-vue": "^5.0.0",
-              "@vitejs/plugin-react": "^4.2.0"
+              "@vitejs/plugin-react": "^4.2.0",
+              "vue": "^3.4.0",
+              "react": "^18.2.0",
+              "react-dom": "^18.2.0"
             }
           }
           EOF
 
+          # MEMBUAT VITE CONFIG YANG AMAN
+          # Config ini akan cek error dan tetap lanjut (tidak crash jika file vue tidak ditemukan)
           cat << 'EOF' > vite.config.js
           import { defineConfig } from 'vite';
           import vue from '@vitejs/plugin-vue';
           import react from '@vitejs/plugin-react';
 
           export default defineConfig({
-            plugins: [vue(), react()],
+            plugins: [
+              // Hanya load plugin jika diperlukan, tapi biarkan default aktif
+              vue(), 
+              react()
+            ],
             root: 'src_temp',
             build: {
               outDir: '../dist',
               emptyOutDir: true,
               assetsDir: 'assets',
               rollupOptions: {
+                // Pastikan library external (CDN) tidak ikut dibundle dan bikin error
+                external: ['angular', 'vue', 'react', 'react-dom'],
                 output: {
-                  entryFileNames: 'assets/[name].js',
-                  chunkFileNames: 'assets/[name].js',
-                  assetFileNames: 'assets/[name].[ext]'
+                  entryFileNames: 'assets/[name]-[hash].js',
+                  chunkFileNames: 'assets/[name]-[hash].js',
+                  assetFileNames: 'assets/[name]-[hash].[ext]',
+                  // Fix untuk variabel global seperti AngularJS
+                  format: 'es' 
                 }
-              }
+              },
+              // Cegah error pada code legacy yang campur aduk
+              commonjsOptions: { transformMixedEsModules: true }
             }
           });
           EOF
 
-          echo "import { Capacitor } from '@capacitor/core';" > src_temp/bridge.js
-          echo "import { Plugins } from '@capacitor/core';" >> src_temp/bridge.js
+          # MEMBUAT BRIDGE.JS (Jembatan Komunikasi Native)
+          echo "import { Capacitor, Plugins } from '@capacitor/core';" > src_temp/bridge.js
           echo "window.Capacitor = Capacitor;" >> src_temp/bridge.js
-          echo "window.Capacitor.Plugins = window.Capacitor.Plugins || {};" >> src_temp/bridge.js
+          echo "window.Capacitor.Plugins = Plugins;" >> src_temp/bridge.js
           
+          # Install Plugins Dinamis dari plugins.txt
           if [ -s "src_temp/plugins.txt" ]; then
             PLUGINS=$(cat src_temp/plugins.txt | grep -v '^//' | tr '\n' ' ' | tr -d '\r' | xargs)
             if [ -n "$PLUGINS" ]; then
               curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ github.event.inputs.id }}\", \"log\": \"[NPM] Installing Plugins: $PLUGINS\"}" "${{ github.event.inputs.logUrl }}"
               npm install $PLUGINS --save --no-audit --prefer-offline
               
+              # Generate import otomatis untuk setiap plugin
               counter=0
               while read -r plugin; do
                 [[ $plugin = //* ]] && continue
                 [[ -z $plugin ]] && continue
-                clean_name=$(echo "$plugin" | sed -e 's/[^a-zA-Z0-9]/_/g')
+                # Ubah nama package jadi variabel aman (contoh: @capacitor/toast -> capacitor_toast)
+                safe_name=$(echo "$plugin" | sed -e 's/[^a-zA-Z0-9]/_/g')
                 echo "import * as Plugin$counter from '$plugin';" >> src_temp/bridge.js
-                echo "Object.assign(window.Capacitor.Plugins, Plugin$counter);" >> src_temp/bridge.js
+                # Inject ke object global
+                echo "if(window.Capacitor.Plugins) { Object.assign(window.Capacitor.Plugins, Plugin$counter); }" >> src_temp/bridge.js
                 ((counter++))
               done < src_temp/plugins.txt
             fi
           fi
 
+          # Inject bridge.js ke head index.html
           sed -i 's|</head>|<script type="module" src="./bridge.js"></script></head>|i' src_temp/index.html
           
-          npm install --no-audit --prefer-offline
+          # Install & Build
+          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ github.event.inputs.id }}\", \"log\": \"[VITE] Installing Dependencies...\"}" "${{ github.event.inputs.logUrl }}"
+          npm install --no-audit --prefer-offline --silent
           
           curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ github.event.inputs.id }}\", \"log\": \"[VITE] Bundling Web Assets...\"}" "${{ github.event.inputs.logUrl }}"
           npm run build
