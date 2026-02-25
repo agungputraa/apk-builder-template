@@ -46,53 +46,59 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # 1. GUNAKAN NODE 22 (Wajib untuk Capacitor 7)
       - name: Setup Node (v22)
         uses: actions/setup-node@v4
         with:
           node-version: '22'
 
-      - name: Setup Java (v17 Stable)
+      # 2. GUNAKAN JAVA 21 (Solusi untuk error "invalid source release: 21")
+      - name: Setup Java (v21)
         uses: actions/setup-java@v4
         with:
           distribution: 'zulu'
-          java-version: '17'
+          java-version: '21'
           cache: 'gradle'
 
-      - name: Initialize & Fix Dependencies
+      - name: Initialize & Stabilize Dependencies
         run: |
-          # 1. Notify System
-          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ github.event.inputs.id }}\", \"log\": \"[SYSTEM] Initializing & Fixing Dependencies...\"}" "${{ github.event.inputs.logUrl }}"
+          # Notify System
+          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ github.event.inputs.id }}\", \"log\": \"[SYSTEM] Initializing & Fixing Environment...\"}" "${{ github.event.inputs.logUrl }}"
           
-          # 2. Setup Capacitor Config
+          # Setup Capacitor Config
           if [ "${{ github.event.inputs.mode }}" == "code" ]; then
              jq '.appId = "${{ github.event.inputs.packageName }}" | .appName = "${{ github.event.inputs.appName }}" | .webDir = "www" | del(.server.url)' capacitor.config.json > tmp.json && mv tmp.json capacitor.config.json
           else
              jq '.appId = "${{ github.event.inputs.packageName }}" | .appName = "${{ github.event.inputs.appName }}" | .server.url = "${{ github.event.inputs.url }}"' capacitor.config.json > tmp.json && mv tmp.json capacitor.config.json
           fi
 
-          # 3. Update Android App Info
+          # Update Android App Info
           sed -i 's/<string name="app_name">.*<\/string>/<string name="app_name">${{ github.event.inputs.appName }}<\/string>/g' android/app/src/main/res/values/strings.xml
           sed -i 's/versionCode [0-9]*/versionCode ${{ github.event.inputs.versionCode }}/g' android/app/build.gradle
           sed -i 's/versionName "[^"]*"/versionName "${{ github.event.inputs.versionName }}"/g' android/app/build.gradle
           
           # ==================================================================================
-          # 4. SUPER FIX: DOWNGRADE DEPENDENCIES TO STABLE (SDK 34 COMPATIBLE)
+          # 3. SUPER FIX: FORCE STABLE CONFIGURATION (SDK 35 + Java 21)
           # ==================================================================================
-          echo "Downgrading libraries to stable versions..."
+          echo "Stabilizing Android Project..."
           
-          # Fix Variables.gradle (Downgrade from bleeding edge versions)
-          sed -i "s/compileSdkVersion = .*/compileSdkVersion = 34/" android/variables.gradle
-          sed -i "s/targetSdkVersion = .*/targetSdkVersion = 34/" android/variables.gradle
-          sed -i "s/androidxActivityVersion = .*/androidxActivityVersion = '1.9.0'/" android/variables.gradle
-          sed -i "s/androidxAppCompatVersion = .*/androidxAppCompatVersion = '1.6.1'/" android/variables.gradle
-          sed -i "s/androidxCoordinatorLayoutVersion = .*/androidxCoordinatorLayoutVersion = '1.2.0'/" android/variables.gradle
-          sed -i "s/androidxCoreVersion = .*/androidxCoreVersion = '1.13.1'/" android/variables.gradle
-          sed -i "s/androidxFragmentVersion = .*/androidxFragmentVersion = '1.6.2'/" android/variables.gradle
+          # Force SDK 35 (Android 15 Stable) - SDK 36 is Preview and causes errors
+          sed -i "s/compileSdkVersion = .*/compileSdkVersion = 35/" android/variables.gradle
+          sed -i "s/targetSdkVersion = .*/targetSdkVersion = 35/" android/variables.gradle
+          
+          # Downgrade libraries that force SDK 36 (Preview) to versions compatible with SDK 35
+          sed -i "s/androidxActivityVersion = .*/androidxActivityVersion = '1.9.3'/" android/variables.gradle
+          sed -i "s/androidxAppCompatVersion = .*/androidxAppCompatVersion = '1.7.0'/" android/variables.gradle
+          sed -i "s/androidxCoreVersion = .*/androidxCoreVersion = '1.15.0'/" android/variables.gradle
           sed -i "s/coreSplashScreenVersion = .*/coreSplashScreenVersion = '1.0.1'/" android/variables.gradle
-          sed -i "s/androidxWebkitVersion = .*/androidxWebkitVersion = '1.11.0'/" android/variables.gradle
+          sed -i "s/androidxWebkitVersion = .*/androidxWebkitVersion = '1.12.1'/" android/variables.gradle
           
-          # Fix Build.gradle (Ensure AGP is stable 8.2.1)
-          sed -i "s/gradle:8.13.0/gradle:8.2.1/" android/build.gradle
+          # Upgrade AGP to 8.7.3 (Compatible with Java 21)
+          sed -i "s/gradle:8.13.0/gradle:8.7.3/" android/build.gradle
+          sed -i "s/gradle:8.2.1/gradle:8.7.3/" android/build.gradle
+          
+          # Upgrade Gradle Wrapper to 8.11.1 (Required for AGP 8.7+)
+          sed -i 's/distributionUrl=.*/distributionUrl=https\\:\/\/services.gradle.org\/distributions\/gradle-8.11.1-bin.zip/' android/gradle/wrapper/gradle-wrapper.properties
           
           # Setup Icons
           mkdir -p assets
@@ -188,7 +194,7 @@ jobs:
           
           curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ github.event.inputs.id }}\", \"log\": \"[BUILD] Compiling APK (This may take a while)...\"}" "${{ github.event.inputs.logUrl }}"
           
-          # Run without --parallel to reduce race conditions in logs
+          # Build APK
           ./gradlew assembleDebug --no-daemon
 
       - name: Release Artifact
@@ -207,7 +213,7 @@ jobs:
         run: |
           STATUS="failed"
           APK_URL=""
-          MSG="[ERROR] Build Failed. Check GitHub Logs."
+          MSG="[ERROR] Build Failed. Check logs."
           SAFE_APP_NAME=$(echo "${{ github.event.inputs.appName }}" | tr ' ' '_')
           
           if [ "${{ job.status }}" == "success" ]; then
