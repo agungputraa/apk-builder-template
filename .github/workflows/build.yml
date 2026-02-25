@@ -36,6 +36,10 @@ on:
       projectZip:
         required: false
         type: string
+      format:
+        required: false
+        default: 'apk'
+        type: string
 
 permissions:
   contents: write
@@ -60,7 +64,7 @@ jobs:
 
       - name: Initialize & Force Stable Dependencies
         run: |
-          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ github.event.inputs.id }}\", \"log\": \"[SYSTEM] Initializing Repo Engine & Resolving Dependencies...\"}" "${{ github.event.inputs.logUrl }}"
+          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ github.event.inputs.id }}\", \"log\": \"[SYSTEM] Initializing Repo Engine...\"}" "${{ github.event.inputs.logUrl }}"
           
           if [ "${{ github.event.inputs.mode }}" == "code" ]; then
              jq '.appId = "${{ github.event.inputs.packageName }}" | .appName = "${{ github.event.inputs.appName }}" | .webDir = "www" | del(.server.url)' capacitor.config.json > tmp.json && mv tmp.json capacitor.config.json
@@ -77,10 +81,6 @@ jobs:
           sed -i "s/gradle:8.13.0/gradle:8.7.3/" android/build.gradle
           sed -i 's/distributionUrl=.*/distributionUrl=https\\:\/\/services.gradle.org\/distributions\/gradle-8.11.1-bin.zip/' android/gradle/wrapper/gradle-wrapper.properties
           
-          # =========================================================================
-          # THE ULTIMATE DEPENDENCY FIX
-          # Memblokir versi Alpha (SDK 36) dan memaksa Gradle menggunakan versi Stabil
-          # =========================================================================
           cat <<EOF >> android/build.gradle
           allprojects {
               configurations.all {
@@ -113,12 +113,10 @@ jobs:
           echo '{"type":"module","dependencies":{"@capacitor/core":"latest","@capacitor/android":"latest","esbuild":"latest"}}' > package.json
           npm install
 
-          # Build Bridge Native untuk JS
           cat << 'EOF' > gen.js
           import fs from 'fs';
           import { execSync } from 'child_process';
           
-          // PERBAIKAN: Menambahkan isNative dan getPlatform agar webapp mengenali mode Android
           let code = `
           import { Capacitor } from '@capacitor/core';
           window.Capacitor = Capacitor;
@@ -145,15 +143,20 @@ jobs:
           cd ..
           sed -i 's|<head>|<head><script src="native-bridge.js"></script>|i' www/index.html
 
-      - name: Compile APK
+      - name: Compile App
         run: |
           set -e
+          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ github.event.inputs.id }}\", \"log\": \"[BUILD] Compiling ${{ github.event.inputs.format }}...\"}" "${{ github.event.inputs.logUrl }}"
           npm install @capacitor/assets @capacitor/cli
           npx @capacitor/assets generate --iconBackgroundColor '#ffffff' --splashBackgroundColor '#ffffff'
           npx cap sync android
           cd android
           chmod +x gradlew
-          ./gradlew assembleDebug --no-daemon
+          if [ "${{ github.event.inputs.format }}" == "aab" ]; then
+            ./gradlew bundleRelease --no-daemon
+          else
+            ./gradlew assembleDebug --no-daemon
+          fi
 
       - name: Release Artifact
         if: success()
@@ -161,9 +164,18 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           SAFE_NAME=$(echo "${{ github.event.inputs.appName }}" | tr ' ' '_')
-          mv android/app/build/outputs/apk/debug/app-debug.apk "android/app/build/outputs/apk/debug/${SAFE_NAME}.apk"
           gh release delete build-${{ github.event.inputs.id }} --cleanup-tag -y || true
-          gh release create build-${{ github.event.inputs.id }} "android/app/build/outputs/apk/debug/${SAFE_NAME}.apk" --title "${{ github.event.inputs.appName }}" --notes "Build dari Repository Template"
+          
+          if [ "${{ github.event.inputs.format }}" == "aab" ]; then
+            FILE_PATH="android/app/build/outputs/bundle/release/app-release.aab"
+            TARGET_FILE="${SAFE_NAME}.aab"
+          else
+            FILE_PATH="android/app/build/outputs/apk/debug/app-debug.apk"
+            TARGET_FILE="${SAFE_NAME}.apk"
+          fi
+          
+          mv "$FILE_PATH" "$TARGET_FILE"
+          gh release create build-${{ github.event.inputs.id }} "$TARGET_FILE" --title "${{ github.event.inputs.appName }}" --notes "Build Format: ${{ github.event.inputs.format }}"
 
       - name: Notify
         if: always()
@@ -173,6 +185,10 @@ jobs:
           if [ "${{ job.status }}" == "success" ]; then
              STATUS="success"
              SAFE_NAME=$(echo "${{ github.event.inputs.appName }}" | tr ' ' '_')
-             APK="https://github.com/${{ github.repository }}/releases/download/build-${{ github.event.inputs.id }}/${SAFE_NAME}.apk"
+             if [ "${{ github.event.inputs.format }}" == "aab" ]; then
+                APK="https://github.com/${{ github.repository }}/releases/download/build-${{ github.event.inputs.id }}/${SAFE_NAME}.aab"
+             else
+                APK="https://github.com/${{ github.repository }}/releases/download/build-${{ github.event.inputs.id }}/${SAFE_NAME}.apk"
+             fi
           fi
           curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ github.event.inputs.id }}\", \"status\": \"$STATUS\", \"apk_url\": \"$APK\"}" "${{ github.event.inputs.webhookUrl }}"
