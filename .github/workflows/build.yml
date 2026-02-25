@@ -1,4 +1,5 @@
 name: Pro APK Builder
+
 on:
   workflow_dispatch:
     inputs:
@@ -39,61 +40,48 @@ on:
         required: false
         type: string
         default: 'apk'
+
 permissions:
   contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      
+
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: '22'
-          
+
       - name: Setup Java
         uses: actions/setup-java@v4
         with:
           distribution: 'zulu'
           java-version: '21'
           cache: 'gradle'
-          
-      - name: Initialize & Force Stable Dependencies
+
+      - name: Configuration Injection
         run: |
           curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ github.event.inputs.id }}\", \"log\": \"[SYSTEM] Initializing Repo Engine & Resolving Dependencies...\"}" "${{ github.event.inputs.logUrl }}"
+          
           if [ "${{ github.event.inputs.mode }}" == "code" ]; then
              jq '.appId = "${{ github.event.inputs.packageName }}" | .appName = "${{ github.event.inputs.appName }}" | .webDir = "www" | del(.server.url)' capacitor.config.json > tmp.json && mv tmp.json capacitor.config.json
           else
              jq '.appId = "${{ github.event.inputs.packageName }}" | .appName = "${{ github.event.inputs.appName }}" | .server.url = "${{ github.event.inputs.url }}"' capacitor.config.json > tmp.json && mv tmp.json capacitor.config.json
           fi
+
+          # Ini wajib berjalan di setiap build karena inputnya dinamis (berubah-ubah tergantung data dari web UI)
           sed -i 's/<string name="app_name">.*<\/string>/<string name="app_name">${{ github.event.inputs.appName }}<\/string>/g' android/app/src/main/res/values/strings.xml
           sed -i 's/versionCode [0-9]*/versionCode ${{ github.event.inputs.versionCode }}/g' android/app/build.gradle
           sed -i 's/versionName "[^"]*"/versionName "${{ github.event.inputs.versionName }}"/g' android/app/build.gradle
-          sed -i "s/compileSdkVersion = .*/compileSdkVersion = 35/" android/variables.gradle
-          sed -i "s/targetSdkVersion = .*/targetSdkVersion = 35/" android/variables.gradle
-          sed -i "s/gradle:8.13.0/gradle:8.7.3/" android/build.gradle
-          sed -i 's/distributionUrl=.*/distributionUrl=https\:\/\/services.gradle.org\/distributions\/gradle-8.11.1-bin.zip/' android/gradle/wrapper/gradle-wrapper.properties
-          
-          echo "allprojects {" >> android/build.gradle
-          echo "    configurations.all {" >> android/build.gradle
-          echo "        resolutionStrategy {" >> android/build.gradle
-          echo "            force 'org.jetbrains.kotlin:kotlin-stdlib:1.9.24'" >> android/build.gradle
-          echo "            force 'org.jetbrains.kotlin:kotlin-stdlib-jdk8:1.9.24'" >> android/build.gradle
-          echo "            force 'org.jetbrains.kotlin:kotlin-stdlib-jdk7:1.9.24'" >> android/build.gradle
-          echo "            force 'androidx.activity:activity:1.9.3'" >> android/build.gradle
-          echo "            force 'androidx.core:core:1.13.1'" >> android/build.gradle
-          echo "            force 'androidx.core:core-ktx:1.13.1'" >> android/build.gradle
-          echo "            force 'androidx.core:core-splashscreen:1.0.1'" >> android/build.gradle
-          echo "        }" >> android/build.gradle
-          echo "    }" >> android/build.gradle
-          echo "}" >> android/build.gradle
           
           mkdir -p assets
           curl -L "${{ github.event.inputs.iconUrl }}" -o assets/icon.png
           cp assets/icon.png assets/splash.png
-          
-      - name: Process Source & Plugin Injection
+
+      - name: Process Source & Native Bridge Injection
         if: ${{ github.event.inputs.mode == 'code' }}
         run: |
           set -e
@@ -101,27 +89,29 @@ jobs:
           unzip -o project.zip -d www/
           
           if [ -f "www/package.json" ]; then
-              DEPS=$(jq -r '.dependencies | keys[]?' www/package.json | tr '\n' ' ')
+              # Install deps di ROOT agar tersinkronisasi ke Android Gradle
+              DEPS=$(jq -r '.dependencies | keys[]?' www/package.json | grep "@capacitor" | tr '\n' ' ')
               if [ ! -z "$DEPS" ]; then
                   npm install $DEPS
               fi
               
+              # Setup JS Bridge di dalam direktori Web
               cd www
               npm install
               
               node -e "
               const fs = require('fs');
-              let code = \"import { Capacitor } from '@capacitor/core';\n\" +
-                         \"window.Capacitor = window.Capacitor || {};\n\" +
-                         \"window.Capacitor.Plugins = window.Capacitor.Plugins || {};\n\";
-              
               const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
               const deps = Object.keys(pkg.dependencies || {});
+              let code = \"import { Capacitor } from '@capacitor/core';\n\";
+              code += \"window.Capacitor = window.Capacitor || Capacitor;\n\";
+              code += \"window.Capacitor.isNative = true;\n\";
+              code += \"window.Capacitor.Plugins = window.Capacitor.Plugins || {};\n\";
               let pIdx = 0;
               deps.forEach(dep => {
                   if (dep.startsWith('@capacitor/') && dep !== '@capacitor/core' && dep !== '@capacitor/android') {
-                      code += \"import * as P\" + pIdx + \" from '\" + dep + \"';\n\" +
-                              \"Object.assign(window.Capacitor.Plugins, P\" + pIdx + \");\n\";
+                      code += \"import * as P\" + pIdx + \" from '\" + dep + \"';\n\";
+                      code += \"Object.assign(window.Capacitor.Plugins, P\" + pIdx + \");\n\";
                       pIdx++;
                   }
               });
@@ -129,12 +119,12 @@ jobs:
               "
               
               npx esbuild bridge.js --bundle --minify --outfile=native-bridge.js --format=iife
-              sed -i 's|<head>|<head><script src="native-bridge.js"></script>|i' index.html
+              sed -i 's|</body>|<script src="native-bridge.js"></script></body>|i' index.html
               cd ..
           else
               npm install @capacitor/core @capacitor/android esbuild
           fi
-          
+
       - name: Compile App
         run: |
           set -e
@@ -148,7 +138,7 @@ jobs:
           else
               ./gradlew assembleDebug --no-daemon
           fi
-          
+
       - name: Release Artifact
         if: success()
         env:
@@ -163,8 +153,8 @@ jobs:
               mv android/app/build/outputs/apk/debug/app-debug.apk "android/app/build/outputs/apk/debug/${SAFE_NAME}.apk"
               gh release create build-${{ github.event.inputs.id }} "android/app/build/outputs/apk/debug/${SAFE_NAME}.apk" --title "${{ github.event.inputs.appName }}"
           fi
-          
-      - name: Notify
+
+      - name: Notify System
         if: always()
         run: |
           STATUS="failed"
