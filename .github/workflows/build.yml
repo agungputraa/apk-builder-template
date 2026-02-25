@@ -52,7 +52,7 @@ jobs:
         with:
           node-version: '22'
 
-      # 2. GUNAKAN JAVA 21 (Solusi untuk error "invalid source release: 21")
+      # 2. GUNAKAN JAVA 21 (Standar baru Android Build)
       - name: Setup Java (v21)
         uses: actions/setup-java@v4
         with:
@@ -78,15 +78,15 @@ jobs:
           sed -i 's/versionName "[^"]*"/versionName "${{ github.event.inputs.versionName }}"/g' android/app/build.gradle
           
           # ==================================================================================
-          # 3. SUPER FIX: FORCE STABLE CONFIGURATION (SDK 35 + Java 21)
+          # 3. SUPER FIX: FORCE STABLE CONFIGURATION & KOTLIN VERSION
           # ==================================================================================
           echo "Stabilizing Android Project..."
           
-          # Force SDK 35 (Android 15 Stable) - SDK 36 is Preview and causes errors
+          # Force SDK 35 (Android 15 Stable)
           sed -i "s/compileSdkVersion = .*/compileSdkVersion = 35/" android/variables.gradle
           sed -i "s/targetSdkVersion = .*/targetSdkVersion = 35/" android/variables.gradle
           
-          # Downgrade libraries that force SDK 36 (Preview) to versions compatible with SDK 35
+          # Downgrade libraries to stable compatible versions
           sed -i "s/androidxActivityVersion = .*/androidxActivityVersion = '1.9.3'/" android/variables.gradle
           sed -i "s/androidxAppCompatVersion = .*/androidxAppCompatVersion = '1.7.0'/" android/variables.gradle
           sed -i "s/androidxCoreVersion = .*/androidxCoreVersion = '1.15.0'/" android/variables.gradle
@@ -97,8 +97,25 @@ jobs:
           sed -i "s/gradle:8.13.0/gradle:8.7.3/" android/build.gradle
           sed -i "s/gradle:8.2.1/gradle:8.7.3/" android/build.gradle
           
-          # Upgrade Gradle Wrapper to 8.11.1 (Required for AGP 8.7+)
+          # Upgrade Gradle Wrapper
           sed -i 's/distributionUrl=.*/distributionUrl=https\\:\/\/services.gradle.org\/distributions\/gradle-8.11.1-bin.zip/' android/gradle/wrapper/gradle-wrapper.properties
+          
+          # --- ANTI-DUPLICATE CLASS FIX ---
+          # Inject Resolution Strategy to force consistent Kotlin Version
+          cat <<EOF >> android/build.gradle
+
+          allprojects {
+              configurations.all {
+                  resolutionStrategy {
+                      eachDependency { details ->
+                          if (details.requested.group == 'org.jetbrains.kotlin' && details.requested.name.startsWith('kotlin-stdlib')) {
+                              details.useVersion '1.9.22'
+                          }
+                      }
+                  }
+              }
+          }
+          EOF
           
           # Setup Icons
           mkdir -p assets
