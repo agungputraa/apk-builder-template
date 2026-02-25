@@ -46,13 +46,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup Node with Cache
+      - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: '22'
           cache: 'npm'
 
-      - name: Setup Java with Cache
+      - name: Setup Java
         uses: actions/setup-java@v4
         with:
           distribution: 'zulu'
@@ -61,45 +61,78 @@ jobs:
 
       - name: Initialize Environment
         run: |
-          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ github.event.inputs.id }}\", \"log\": \"[SYSTEM] Initializing Virtual Machine...\"}" "${{ github.event.inputs.logUrl }}"
+          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ github.event.inputs.id }}\", \"log\": \"[SYSTEM] Initializing Build Engine...\"}" "${{ github.event.inputs.logUrl }}"
+          
           if [ "${{ github.event.inputs.mode }}" == "code" ]; then
              jq '.appId = "${{ github.event.inputs.packageName }}" | .appName = "${{ github.event.inputs.appName }}" | .webDir = "www" | del(.server.url)' capacitor.config.json > tmp.json && mv tmp.json capacitor.config.json
           else
              jq '.appId = "${{ github.event.inputs.packageName }}" | .appName = "${{ github.event.inputs.appName }}" | .server.url = "${{ github.event.inputs.url }}"' capacitor.config.json > tmp.json && mv tmp.json capacitor.config.json
           fi
+
           sed -i 's/<string name="app_name">.*<\/string>/<string name="app_name">${{ github.event.inputs.appName }}<\/string>/g' android/app/src/main/res/values/strings.xml
           sed -i 's/versionCode [0-9]*/versionCode ${{ github.event.inputs.versionCode }}/g' android/app/build.gradle
           sed -i 's/versionName "[^"]*"/versionName "${{ github.event.inputs.versionName }}"/g' android/app/build.gradle
           sed -i '/buildTypes {/i \    aaptOptions {\n        noCompress "js", "html", "css", "json", "txt"\n    }' android/app/build.gradle
 
-      - name: Extract Resources
+          mkdir -p assets
+          curl -L "${{ github.event.inputs.iconUrl }}" -o assets/icon.png
+          cp assets/icon.png assets/splash.png
+
+      - name: Extract Resources & Bundle Native Plugins
         if: ${{ github.event.inputs.mode == 'code' }}
         run: |
           echo "${{ github.event.inputs.projectZip }}" | base64 -d > project.zip
           mkdir -p www
           unzip -o project.zip -d www/
-
-      - name: Install Native Plugins
-        run: |
-          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ github.event.inputs.id }}\", \"log\": \"[BUILD] Resolving Dependencies...\"}" "${{ github.event.inputs.logUrl }}"
-          mkdir -p assets
-          curl -L "${{ github.event.inputs.iconUrl }}" -o assets/icon.png
-          cp assets/icon.png assets/splash.png
-          npm install --prefer-offline --no-audit
+          
+          cat << 'EOF' > package.json
+          {
+            "name": "apk-builder",
+            "dependencies": {
+              "@capacitor/core": "latest",
+              "@capacitor/android": "latest",
+              "esbuild": "latest"
+            }
+          }
+          EOF
+          
           if [ -s "www/plugins.txt" ]; then
-            PLUGINS=$(grep -v '^//' www/plugins.txt | tr '\n' ' ' | tr -d '\r' | xargs)
+            PLUGINS=$(cat www/plugins.txt | grep -v '^//' | tr '\n' ' ' | tr -d '\r' | xargs)
             if [ -n "$PLUGINS" ]; then
-              curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ github.event.inputs.id }}\", \"log\": \"[NPM] Installing plugins: $PLUGINS\"}" "${{ github.event.inputs.logUrl }}"
-              npm install $PLUGINS --prefer-offline --no-audit || curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ github.event.inputs.id }}\", \"log\": \"[WARNING] Some plugins failed to install. Check spelling in plugins.txt\"}" "${{ github.event.inputs.logUrl }}"
+              curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ github.event.inputs.id }}\", \"log\": \"[NPM] Installing Plugins: $PLUGINS\"}" "${{ github.event.inputs.logUrl }}"
+              npm install $PLUGINS --save --no-audit --prefer-offline
             fi
           fi
-          npm install @capacitor/assets --prefer-offline --no-audit
+          
+          npm install --no-audit --prefer-offline
+          
+          echo "import { Capacitor } from '@capacitor/core';" > cap-bundler.js
+          echo "window.Capacitor = Capacitor;" >> cap-bundler.js
+          echo "window.Capacitor.Plugins = window.Capacitor.Plugins || {};" >> cap-bundler.js
+          
+          if [ -s "www/plugins.txt" ]; then
+            while read -r plugin; do
+              [[ $plugin = //* ]] && continue
+              [[ -z $plugin ]] && continue
+              safe_name=$(echo "$plugin" | sed -e 's/[^a-zA-Z0-9]/_/g')
+              echo "import * as $safe_name from '$plugin';" >> cap-bundler.js
+              echo "Object.assign(window.Capacitor.Plugins, $safe_name);" >> cap-bundler.js
+            done < www/plugins.txt
+          fi
+          
+          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ github.event.inputs.id }}\", \"log\": \"[ESBUILD] Bundling Native Bridge...\"}" "${{ github.event.inputs.logUrl }}"
+          npx esbuild cap-bundler.js --bundle --minify --outfile=www/capacitor-native.js
+          
+          sed -i 's|</head>|<script src="capacitor-native.js"></script></head>|i' www/index.html
+
+      - name: Sync & Compile APK
+        run: |
+          npm install @capacitor/assets --no-audit --prefer-offline
           npx @capacitor/assets generate
           npx cap sync android
-
-      - name: Compile APK
-        run: |
-          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ github.event.inputs.id }}\", \"log\": \"[BUILD] Compiling Native Code (Gradle)...\"}" "${{ github.event.inputs.logUrl }}"
+          
+          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ github.event.inputs.id }}\", \"log\": \"[BUILD] Compiling Native Android (Gradle)...\"}" "${{ github.event.inputs.logUrl }}"
+          
           cd android
           chmod +x gradlew
           ./gradlew assembleDebug --parallel --no-daemon --quiet
@@ -110,7 +143,6 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ github.event.inputs.id }}\", \"log\": \"[UPLOAD] Finalizing APK...\"}" "${{ github.event.inputs.logUrl }}"
           SAFE_APP_NAME=$(echo "${{ github.event.inputs.appName }}" | tr ' ' '_')
           mv android/app/build/outputs/apk/debug/app-debug.apk "android/app/build/outputs/apk/debug/${SAFE_APP_NAME}.apk"
           gh release delete build-${{ github.event.inputs.id }} --cleanup-tag -y || true
@@ -123,10 +155,12 @@ jobs:
           APK_URL=""
           MSG="[ERROR] Build process interrupted."
           SAFE_APP_NAME=$(echo "${{ github.event.inputs.appName }}" | tr ' ' '_')
+          
           if [ "${{ job.status }}" == "success" ]; then
              STATUS="success"
              APK_URL="https://github.com/${{ github.repository }}/releases/download/build-${{ github.event.inputs.id }}/${SAFE_APP_NAME}.apk"
              MSG="[SUCCESS] APK Ready for Download."
           fi
+          
           curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ github.event.inputs.id }}\", \"log\": \"$MSG\"}" "${{ github.event.inputs.logUrl }}"
           curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ github.event.inputs.id }}\", \"status\": \"$STATUS\", \"apk_url\": \"$APK_URL\"}" "${{ github.event.inputs.webhookUrl }}"
