@@ -61,40 +61,38 @@ jobs:
 
       - name: Initialize Environment
         run: |
-          # Kirim Log Awal
           curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ github.event.inputs.id }}\", \"log\": \"[SYSTEM] Initializing Hybrid Engine...\"}" "${{ github.event.inputs.logUrl }}"
           
-          # Konfigurasi Capacitor
-          # Kita set webDir ke 'www' karena kita tidak pakai dist folder dari vite
+          # Setup Capacitor Config
           if [ "${{ github.event.inputs.mode }}" == "code" ]; then
              jq '.appId = "${{ github.event.inputs.packageName }}" | .appName = "${{ github.event.inputs.appName }}" | .webDir = "www" | del(.server.url)' capacitor.config.json > tmp.json && mv tmp.json capacitor.config.json
           else
              jq '.appId = "${{ github.event.inputs.packageName }}" | .appName = "${{ github.event.inputs.appName }}" | .server.url = "${{ github.event.inputs.url }}"' capacitor.config.json > tmp.json && mv tmp.json capacitor.config.json
           fi
 
-          # Update Android Resources (Nama App & Versi)
+          # Update Android Resources
           sed -i 's/<string name="app_name">.*<\/string>/<string name="app_name">${{ github.event.inputs.appName }}<\/string>/g' android/app/src/main/res/values/strings.xml
           sed -i 's/versionCode [0-9]*/versionCode ${{ github.event.inputs.versionCode }}/g' android/app/build.gradle
           sed -i 's/versionName "[^"]*"/versionName "${{ github.event.inputs.versionName }}"/g' android/app/build.gradle
           
-          # Download Icon
           mkdir -p assets
           curl -L "${{ github.event.inputs.iconUrl }}" -o assets/icon.png
           cp assets/icon.png assets/splash.png
 
-      - name: Process Source Code (No-Bundler Mode)
+      - name: Process Source (Native Bridge)
         if: ${{ github.event.inputs.mode == 'code' }}
         run: |
-          # 1. Decode Project ZIP
+          # 1. Decode & Unzip
           echo "${{ github.event.inputs.projectZip }}" | base64 -d > project.zip
           mkdir -p www
           unzip -o project.zip -d www/
           
-          # 2. Buat package.json minimal hanya untuk Capacitor & esbuild
-          # Kita TIDAK butuh angular/react/vue di sini karena pakai CDN
+          # 2. Buat package.json minimal
+          # Tambahkan type: module agar import/export JS modern berjalan lancar
           cat << 'EOF' > package.json
           {
             "name": "apk-builder",
+            "type": "module", 
             "dependencies": {
               "@capacitor/core": "latest",
               "@capacitor/android": "latest",
@@ -103,20 +101,18 @@ jobs:
           }
           EOF
 
-          # 3. Buat Script Bridge (Jembatan Komunikasi)
-          # Ini satu-satunya file yang akan kita bundle
+          # 3. Buat Script Bridge (Jembatan)
           echo "import { Capacitor, Plugins } from '@capacitor/core';" > cap-bridge.js
           echo "window.Capacitor = Capacitor;" >> cap-bridge.js
           echo "window.Capacitor.Plugins = Plugins;" >> cap-bridge.js
           
-          # 4. Install Plugin Capacitor Secara Dinamis
+          # 4. Install Plugin dari plugins.txt (Jika ada)
           if [ -s "www/plugins.txt" ]; then
             PLUGINS=$(cat www/plugins.txt | grep -v '^//' | tr '\n' ' ' | tr -d '\r' | xargs)
             if [ -n "$PLUGINS" ]; then
-              curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ github.event.inputs.id }}\", \"log\": \"[NPM] Installing Native Plugins: $PLUGINS\"}" "${{ github.event.inputs.logUrl }}"
+              curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ github.event.inputs.id }}\", \"log\": \"[NPM] Installing Plugins: $PLUGINS\"}" "${{ github.event.inputs.logUrl }}"
               npm install $PLUGINS --save --no-audit --prefer-offline
               
-              # Generate import untuk setiap plugin
               counter=0
               while read -r plugin; do
                 [[ $plugin = //* ]] && continue
@@ -129,17 +125,21 @@ jobs:
             fi
           fi
 
-          # 5. Install Dependencies Utama
+          # 5. Install Dependencies (Silent)
           npm install --no-audit --prefer-offline --legacy-peer-deps
 
-          # 6. Bundle Bridge menggunakan ESBUILD (Bukan Vite)
-          # esbuild jauh lebih simpel untuk kasus single-file seperti ini
-          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ github.event.inputs.id }}\", \"log\": \"[BUILD] Linking Native Bridge...\"}" "${{ github.event.inputs.logUrl }}"
-          ./node_modules/.bin/esbuild cap-bridge.js --bundle --minify --outfile=www/native-bridge.js
+          # 6. Bundle Bridge menggunakan NPX ESBUILD (Perbaikan Utama)
+          # Menggunakan npx lebih aman daripada path hardcoded
+          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ github.event.inputs.id }}\", \"log\": \"[BUILD] Bundling Native Bridge...\"}" "${{ github.event.inputs.logUrl }}"
+          npx esbuild cap-bridge.js --bundle --minify --outfile=www/native-bridge.js
 
-          # 7. Inject Script ke Index.html
-          # Kita taruh di paling atas <head> agar window.Capacitor siap sebelum script lain jalan
-          sed -i 's|<head>|<head><script src="native-bridge.js"></script>|i' www/index.html
+          # 7. Inject Script ke HTML
+          # Memastikan file index.html ada sebelum diedit
+          if [ -f "www/index.html" ]; then
+            sed -i 's|<head>|<head><script src="native-bridge.js"></script>|i' www/index.html
+          else
+            echo "Warning: index.html not found in www/"
+          fi
 
       - name: Sync & Compile APK
         run: |
@@ -147,7 +147,7 @@ jobs:
           npx @capacitor/assets generate
           npx cap sync android
           
-          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ github.event.inputs.id }}\", \"log\": \"[BUILD] Compiling Android APK...\"}" "${{ github.event.inputs.logUrl }}"
+          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ github.event.inputs.id }}\", \"log\": \"[BUILD] Compiling Android (Gradle)...\"}" "${{ github.event.inputs.logUrl }}"
           
           cd android
           chmod +x gradlew
@@ -162,7 +162,7 @@ jobs:
           SAFE_APP_NAME=$(echo "${{ github.event.inputs.appName }}" | tr ' ' '_')
           mv android/app/build/outputs/apk/debug/app-debug.apk "android/app/build/outputs/apk/debug/${SAFE_APP_NAME}.apk"
           gh release delete build-${{ github.event.inputs.id }} --cleanup-tag -y || true
-          gh release create build-${{ github.event.inputs.id }} "android/app/build/outputs/apk/debug/${SAFE_APP_NAME}.apk" --title "${{ github.event.inputs.appName }}" --notes "Built with Hybrid Engine (CDN Support)"
+          gh release create build-${{ github.event.inputs.id }} "android/app/build/outputs/apk/debug/${SAFE_APP_NAME}.apk" --title "${{ github.event.inputs.appName }}" --notes "Built via App Studio"
 
       - name: Notify System
         if: always()
