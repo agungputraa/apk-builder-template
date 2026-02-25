@@ -74,21 +74,21 @@ jobs:
           sed -i "s/targetSdkVersion = .*/targetSdkVersion = 35/" android/variables.gradle
           sed -i "s/gradle:8.13.0/gradle:8.7.3/" android/build.gradle
           sed -i 's/distributionUrl=.*/distributionUrl=https\:\/\/services.gradle.org\/distributions\/gradle-8.11.1-bin.zip/' android/gradle/wrapper/gradle-wrapper.properties
-          cat <<EOF >> android/build.gradle
-          allprojects {
-              configurations.all {
-                  resolutionStrategy {
-                      force 'org.jetbrains.kotlin:kotlin-stdlib:1.9.24'
-                      force 'org.jetbrains.kotlin:kotlin-stdlib-jdk8:1.9.24'
-                      force 'org.jetbrains.kotlin:kotlin-stdlib-jdk7:1.9.24'
-                      force 'androidx.activity:activity:1.9.3'
-                      force 'androidx.core:core:1.13.1'
-                      force 'androidx.core:core-ktx:1.13.1'
-                      force 'androidx.core:core-splashscreen:1.0.1'
-                  }
-              }
-          }
-          EOF
+          
+          echo "allprojects {" >> android/build.gradle
+          echo "    configurations.all {" >> android/build.gradle
+          echo "        resolutionStrategy {" >> android/build.gradle
+          echo "            force 'org.jetbrains.kotlin:kotlin-stdlib:1.9.24'" >> android/build.gradle
+          echo "            force 'org.jetbrains.kotlin:kotlin-stdlib-jdk8:1.9.24'" >> android/build.gradle
+          echo "            force 'org.jetbrains.kotlin:kotlin-stdlib-jdk7:1.9.24'" >> android/build.gradle
+          echo "            force 'androidx.activity:activity:1.9.3'" >> android/build.gradle
+          echo "            force 'androidx.core:core:1.13.1'" >> android/build.gradle
+          echo "            force 'androidx.core:core-ktx:1.13.1'" >> android/build.gradle
+          echo "            force 'androidx.core:core-splashscreen:1.0.1'" >> android/build.gradle
+          echo "        }" >> android/build.gradle
+          echo "    }" >> android/build.gradle
+          echo "}" >> android/build.gradle
+          
           mkdir -p assets
           curl -L "${{ github.event.inputs.iconUrl }}" -o assets/icon.png
           cp assets/icon.png assets/splash.png
@@ -101,38 +101,33 @@ jobs:
           unzip -o project.zip -d www/
           
           if [ -f "www/package.json" ]; then
-              # 1. Install semua plugins di ROOT agar terbaca oleh Capacitor Android Native Sync
               DEPS=$(jq -r '.dependencies | keys[]?' www/package.json | tr '\n' ' ')
               if [ ! -z "$DEPS" ]; then
                   npm install $DEPS
               fi
               
-              # 2. Masuk ke www untuk membuat bundler Bridge JS (gen.js akan aman di sini karena ada package.json tipe module)
               cd www
               npm install
               
-              cat << 'EOF' > gen.js
-              import fs from 'fs';
-              let code = `
-              import { Capacitor } from '@capacitor/core';
-              window.Capacitor = window.Capacitor || {};
-              window.Capacitor.Plugins = window.Capacitor.Plugins || {};
-              `;
+              node -e "
+              const fs = require('fs');
+              let code = \"import { Capacitor } from '@capacitor/core';\n\" +
+                         \"window.Capacitor = window.Capacitor || {};\n\" +
+                         \"window.Capacitor.Plugins = window.Capacitor.Plugins || {};\n\";
               
               const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
               const deps = Object.keys(pkg.dependencies || {});
               let pIdx = 0;
               deps.forEach(dep => {
                   if (dep.startsWith('@capacitor/') && dep !== '@capacitor/core' && dep !== '@capacitor/android') {
-                      code += `import * as P${pIdx} from '${dep}';\nObject.assign(window.Capacitor.Plugins, P${pIdx});\n`;
+                      code += \"import * as P\" + pIdx + \" from '\" + dep + \"';\n\" +
+                              \"Object.assign(window.Capacitor.Plugins, P\" + pIdx + \");\n\";
                       pIdx++;
                   }
               });
-              
               fs.writeFileSync('bridge.js', code);
-              EOF
+              "
               
-              node gen.js
               npx esbuild bridge.js --bundle --minify --outfile=native-bridge.js --format=iife
               sed -i 's|<head>|<head><script src="native-bridge.js"></script>|i' index.html
               cd ..
