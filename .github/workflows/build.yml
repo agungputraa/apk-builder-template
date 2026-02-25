@@ -122,8 +122,11 @@ jobs:
         run: |
           curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ github.event.inputs.id }}\", \"log\": \"[UPLOAD] Finalizing APK...\"}" "${{ github.event.inputs.logUrl }}"
           
+          SAFE_APP_NAME=$(echo "${{ github.event.inputs.appName }}" | tr ' ' '_')
+          mv android/app/build/outputs/apk/debug/app-debug.apk "android/app/build/outputs/apk/debug/${SAFE_APP_NAME}.apk"
+          
           gh release delete build-${{ github.event.inputs.id }} --cleanup-tag -y || true
-          gh release create build-${{ github.event.inputs.id }} android/app/build/outputs/apk/debug/app-debug.apk --title "${{ github.event.inputs.appName }}" --notes "Build generated via App Studio"
+          gh release create build-${{ github.event.inputs.id }} "android/app/build/outputs/apk/debug/${SAFE_APP_NAME}.apk" --title "${{ github.event.inputs.appName }}" --notes "Build generated via App Studio"
 
       - name: Notify System
         if: always()
@@ -131,10 +134,11 @@ jobs:
           STATUS="failed"
           APK_URL=""
           MSG="[ERROR] Build process interrupted."
+          SAFE_APP_NAME=$(echo "${{ github.event.inputs.appName }}" | tr ' ' '_')
           
           if [ "${{ job.status }}" == "success" ]; then
              STATUS="success"
-             APK_URL="https://github.com/${{ github.repository }}/releases/download/build-${{ github.event.inputs.id }}/app-debug.apk"
+             APK_URL="https://github.com/${{ github.repository }}/releases/download/build-${{ github.event.inputs.id }}/${SAFE_APP_NAME}.apk"
              MSG="[SUCCESS] APK Ready for Download."
           fi
           
