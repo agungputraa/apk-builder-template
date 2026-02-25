@@ -36,9 +36,8 @@ on:
       projectZip:
         required: false
         type: string
-      format:
-        required: false
-        default: 'apk'
+      buildFormat:
+        required: true
         type: string
 
 permissions:
@@ -64,7 +63,7 @@ jobs:
 
       - name: Initialize & Force Stable Dependencies
         run: |
-          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ github.event.inputs.id }}\", \"log\": \"[SYSTEM] Initializing Repo Engine...\"}" "${{ github.event.inputs.logUrl }}"
+          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ github.event.inputs.id }}\", \"log\": \"[SYSTEM] Memulai Build (${{ github.event.inputs.buildFormat }})...\"}" "${{ github.event.inputs.logUrl }}"
           
           if [ "${{ github.event.inputs.mode }}" == "code" ]; then
              jq '.appId = "${{ github.event.inputs.packageName }}" | .appName = "${{ github.event.inputs.appName }}" | .webDir = "www" | del(.server.url)' capacitor.config.json > tmp.json && mv tmp.json capacitor.config.json
@@ -108,25 +107,20 @@ jobs:
           echo "${{ github.event.inputs.projectZip }}" | base64 -d > project.zip
           unzip -o project.zip -d www/
           
-          mkdir -p builder_tmp
-          cd builder_tmp
           echo '{"type":"module","dependencies":{"@capacitor/core":"latest","@capacitor/android":"latest","esbuild":"latest"}}' > package.json
           npm install
 
           cat << 'EOF' > gen.js
           import fs from 'fs';
           import { execSync } from 'child_process';
-          
-          let code = `
-          import { Capacitor } from '@capacitor/core';
+          let code = `import { Capacitor } from '@capacitor/core';
           window.Capacitor = Capacitor;
           window.Capacitor.Plugins = window.Capacitor.Plugins || {};
           window.Capacitor.isNative = true;
-          window.Capacitor.getPlatform = () => 'android';
-          `;
+          window.Capacitor.getPlatform = () => 'android';\n`;
           
-          if (fs.existsSync('../www/plugins.txt')) {
-              const plugins = fs.readFileSync('../www/plugins.txt', 'utf8').split('\n').map(l => l.trim()).filter(l => l && !l.startsWith('//'));
+          if (fs.existsSync('www/plugins.txt')) {
+              const plugins = fs.readFileSync('www/plugins.txt', 'utf8').split('\n').map(l => l.trim()).filter(l => l.length > 0);
               if (plugins.length > 0) {
                   execSync('npm install ' + plugins.join(' '), { stdio: 'inherit' });
                   plugins.forEach((p, i) => {
@@ -138,22 +132,19 @@ jobs:
           EOF
 
           node gen.js
-          npx esbuild bridge.js --bundle --minify --outfile=../www/native-bridge.js --format=iife
-          
-          cd ..
+          npx esbuild bridge.js --bundle --minify --outfile=www/native-bridge.js --format=iife
           sed -i 's|<head>|<head><script src="native-bridge.js"></script>|i' www/index.html
 
       - name: Compile App
         run: |
           set -e
-          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ github.event.inputs.id }}\", \"log\": \"[BUILD] Compiling ${{ github.event.inputs.format }}...\"}" "${{ github.event.inputs.logUrl }}"
           npm install @capacitor/assets @capacitor/cli
           npx @capacitor/assets generate --iconBackgroundColor '#ffffff' --splashBackgroundColor '#ffffff'
           npx cap sync android
           cd android
           chmod +x gradlew
-          if [ "${{ github.event.inputs.format }}" == "aab" ]; then
-            ./gradlew bundleRelease --no-daemon
+          if [ "${{ github.event.inputs.buildFormat }}" == "aab" ]; then
+            ./gradlew bundleDebug --no-daemon
           else
             ./gradlew assembleDebug --no-daemon
           fi
@@ -164,18 +155,15 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           SAFE_NAME=$(echo "${{ github.event.inputs.appName }}" | tr ' ' '_')
-          gh release delete build-${{ github.event.inputs.id }} --cleanup-tag -y || true
-          
-          if [ "${{ github.event.inputs.format }}" == "aab" ]; then
-            FILE_PATH="android/app/build/outputs/bundle/release/app-release.aab"
-            TARGET_FILE="${SAFE_NAME}.aab"
+          if [ "${{ github.event.inputs.buildFormat }}" == "aab" ]; then
+            mv android/app/build/outputs/bundle/debug/app-debug.aab "${SAFE_NAME}.aab"
+            FILE_UPLOAD="${SAFE_NAME}.aab"
           else
-            FILE_PATH="android/app/build/outputs/apk/debug/app-debug.apk"
-            TARGET_FILE="${SAFE_NAME}.apk"
+            mv android/app/build/outputs/apk/debug/app-debug.apk "${SAFE_NAME}.apk"
+            FILE_UPLOAD="${SAFE_NAME}.apk"
           fi
-          
-          mv "$FILE_PATH" "$TARGET_FILE"
-          gh release create build-${{ github.event.inputs.id }} "$TARGET_FILE" --title "${{ github.event.inputs.appName }}" --notes "Build Format: ${{ github.event.inputs.format }}"
+          gh release delete build-${{ github.event.inputs.id }} --cleanup-tag -y || true
+          gh release create build-${{ github.event.inputs.id }} "$FILE_UPLOAD" --title "${{ github.event.inputs.appName }}" --notes "Build dari Repository Template"
 
       - name: Notify
         if: always()
@@ -185,10 +173,10 @@ jobs:
           if [ "${{ job.status }}" == "success" ]; then
              STATUS="success"
              SAFE_NAME=$(echo "${{ github.event.inputs.appName }}" | tr ' ' '_')
-             if [ "${{ github.event.inputs.format }}" == "aab" ]; then
-                APK="https://github.com/${{ github.repository }}/releases/download/build-${{ github.event.inputs.id }}/${SAFE_NAME}.aab"
+             if [ "${{ github.event.inputs.buildFormat }}" == "aab" ]; then
+               APK="https://github.com/${{ github.repository }}/releases/download/build-${{ github.event.inputs.id }}/${SAFE_NAME}.aab"
              else
-                APK="https://github.com/${{ github.repository }}/releases/download/build-${{ github.event.inputs.id }}/${SAFE_NAME}.apk"
+               APK="https://github.com/${{ github.repository }}/releases/download/build-${{ github.event.inputs.id }}/${SAFE_NAME}.apk"
              fi
           fi
           curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ github.event.inputs.id }}\", \"status\": \"$STATUS\", \"apk_url\": \"$APK\"}" "${{ github.event.inputs.webhookUrl }}"
