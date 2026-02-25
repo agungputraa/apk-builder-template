@@ -46,37 +46,55 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup Node
+      - name: Setup Node (v22)
         uses: actions/setup-node@v4
         with:
           node-version: '22'
 
-      - name: Setup Java
+      - name: Setup Java (v17 Stable)
         uses: actions/setup-java@v4
         with:
           distribution: 'zulu'
-          java-version: '21'
+          java-version: '17'
           cache: 'gradle'
 
-      - name: Initialize & Setup Config
+      - name: Initialize & Fix Dependencies
         run: |
-          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ github.event.inputs.id }}\", \"log\": \"[SYSTEM] Initializing Build Process...\"}" "${{ github.event.inputs.logUrl }}"
+          # 1. Notify System
+          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ github.event.inputs.id }}\", \"log\": \"[SYSTEM] Initializing & Fixing Dependencies...\"}" "${{ github.event.inputs.logUrl }}"
           
+          # 2. Setup Capacitor Config
           if [ "${{ github.event.inputs.mode }}" == "code" ]; then
              jq '.appId = "${{ github.event.inputs.packageName }}" | .appName = "${{ github.event.inputs.appName }}" | .webDir = "www" | del(.server.url)' capacitor.config.json > tmp.json && mv tmp.json capacitor.config.json
           else
              jq '.appId = "${{ github.event.inputs.packageName }}" | .appName = "${{ github.event.inputs.appName }}" | .server.url = "${{ github.event.inputs.url }}"' capacitor.config.json > tmp.json && mv tmp.json capacitor.config.json
           fi
 
+          # 3. Update Android App Info
           sed -i 's/<string name="app_name">.*<\/string>/<string name="app_name">${{ github.event.inputs.appName }}<\/string>/g' android/app/src/main/res/values/strings.xml
           sed -i 's/versionCode [0-9]*/versionCode ${{ github.event.inputs.versionCode }}/g' android/app/build.gradle
           sed -i 's/versionName "[^"]*"/versionName "${{ github.event.inputs.versionName }}"/g' android/app/build.gradle
           
-          # FIX: Downgrade Versions to Stable to prevent Build Failures
-          sed -i 's/compileSdkVersion = 36/compileSdkVersion = 34/g' android/variables.gradle
-          sed -i 's/targetSdkVersion = 36/targetSdkVersion = 34/g' android/variables.gradle
-          sed -i 's/gradle:8.13.0/gradle:8.2.1/g' android/build.gradle
-
+          # ==================================================================================
+          # 4. SUPER FIX: DOWNGRADE DEPENDENCIES TO STABLE (SDK 34 COMPATIBLE)
+          # ==================================================================================
+          echo "Downgrading libraries to stable versions..."
+          
+          # Fix Variables.gradle (Downgrade from bleeding edge versions)
+          sed -i "s/compileSdkVersion = .*/compileSdkVersion = 34/" android/variables.gradle
+          sed -i "s/targetSdkVersion = .*/targetSdkVersion = 34/" android/variables.gradle
+          sed -i "s/androidxActivityVersion = .*/androidxActivityVersion = '1.9.0'/" android/variables.gradle
+          sed -i "s/androidxAppCompatVersion = .*/androidxAppCompatVersion = '1.6.1'/" android/variables.gradle
+          sed -i "s/androidxCoordinatorLayoutVersion = .*/androidxCoordinatorLayoutVersion = '1.2.0'/" android/variables.gradle
+          sed -i "s/androidxCoreVersion = .*/androidxCoreVersion = '1.13.1'/" android/variables.gradle
+          sed -i "s/androidxFragmentVersion = .*/androidxFragmentVersion = '1.6.2'/" android/variables.gradle
+          sed -i "s/coreSplashScreenVersion = .*/coreSplashScreenVersion = '1.0.1'/" android/variables.gradle
+          sed -i "s/androidxWebkitVersion = .*/androidxWebkitVersion = '1.11.0'/" android/variables.gradle
+          
+          # Fix Build.gradle (Ensure AGP is stable 8.2.1)
+          sed -i "s/gradle:8.13.0/gradle:8.2.1/" android/build.gradle
+          
+          # Setup Icons
           mkdir -p assets
           curl -L "${{ github.event.inputs.iconUrl }}" -o assets/icon.png
           cp assets/icon.png assets/splash.png
@@ -95,11 +113,12 @@ jobs:
           mkdir -p build_env
           cd build_env
           
+          # Create minimal package.json
           echo '{"name": "native-builder","type":"module","dependencies":{"@capacitor/core":"latest","@capacitor/android":"latest","esbuild":"latest"}}' > package.json
           
           npm install
           
-          echo ">>> Generating Bridge Script (via Node.js)..."
+          echo ">>> Generating Bridge Script..."
           
           cat << 'EOF' > generate_bridge.js
           import fs from 'fs';
@@ -169,7 +188,8 @@ jobs:
           
           curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ github.event.inputs.id }}\", \"log\": \"[BUILD] Compiling APK (This may take a while)...\"}" "${{ github.event.inputs.logUrl }}"
           
-          ./gradlew assembleDebug --parallel --no-daemon
+          # Run without --parallel to reduce race conditions in logs
+          ./gradlew assembleDebug --no-daemon
 
       - name: Release Artifact
         id: create_release
@@ -187,7 +207,7 @@ jobs:
         run: |
           STATUS="failed"
           APK_URL=""
-          MSG="[ERROR] Build Failed. Check logs."
+          MSG="[ERROR] Build Failed. Check GitHub Logs."
           SAFE_APP_NAME=$(echo "${{ github.event.inputs.appName }}" | tr ' ' '_')
           
           if [ "${{ job.status }}" == "success" ]; then
