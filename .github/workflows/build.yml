@@ -50,7 +50,6 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-          cache: 'npm'
 
       - name: Setup Java
         uses: actions/setup-java@v4
@@ -61,16 +60,14 @@ jobs:
 
       - name: Initialize Environment
         run: |
-          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ github.event.inputs.id }}\", \"log\": \"[SYSTEM] Initializing Hybrid Engine...\"}" "${{ github.event.inputs.logUrl }}"
+          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ github.event.inputs.id }}\", \"log\": \"[SYSTEM] Initializing Engine...\"}" "${{ github.event.inputs.logUrl }}"
           
-          # Setup Capacitor Config
           if [ "${{ github.event.inputs.mode }}" == "code" ]; then
              jq '.appId = "${{ github.event.inputs.packageName }}" | .appName = "${{ github.event.inputs.appName }}" | .webDir = "www" | del(.server.url)' capacitor.config.json > tmp.json && mv tmp.json capacitor.config.json
           else
              jq '.appId = "${{ github.event.inputs.packageName }}" | .appName = "${{ github.event.inputs.appName }}" | .server.url = "${{ github.event.inputs.url }}"' capacitor.config.json > tmp.json && mv tmp.json capacitor.config.json
           fi
 
-          # Update Android Resources
           sed -i 's/<string name="app_name">.*<\/string>/<string name="app_name">${{ github.event.inputs.appName }}<\/string>/g' android/app/src/main/res/values/strings.xml
           sed -i 's/versionCode [0-9]*/versionCode ${{ github.event.inputs.versionCode }}/g' android/app/build.gradle
           sed -i 's/versionName "[^"]*"/versionName "${{ github.event.inputs.versionName }}"/g' android/app/build.gradle
@@ -79,36 +76,26 @@ jobs:
           curl -L "${{ github.event.inputs.iconUrl }}" -o assets/icon.png
           cp assets/icon.png assets/splash.png
 
-      - name: Process Source (Native Bridge)
+      - name: Prepare Source & Native Bridge
         if: ${{ github.event.inputs.mode == 'code' }}
         run: |
-          # 1. Decode & Unzip
+          set -e
+          
           echo "${{ github.event.inputs.projectZip }}" | base64 -d > project.zip
           mkdir -p www
           unzip -o project.zip -d www/
           
-          # 2. Buat package.json minimal
-          # Tambahkan type: module agar import/export JS modern berjalan lancar
-          cat << 'EOF' > package.json
-          {
-            "name": "apk-builder",
-            "type": "module", 
-            "dependencies": {
-              "@capacitor/core": "latest",
-              "@capacitor/android": "latest",
-              "esbuild": "latest"
-            }
-          }
-          EOF
-
-          # 3. Buat Script Bridge (Jembatan)
-          echo "import { Capacitor, Plugins } from '@capacitor/core';" > cap-bridge.js
-          echo "window.Capacitor = Capacitor;" >> cap-bridge.js
-          echo "window.Capacitor.Plugins = Plugins;" >> cap-bridge.js
+          mkdir -p native_builder
+          cd native_builder
           
-          # 4. Install Plugin dari plugins.txt (Jika ada)
-          if [ -s "www/plugins.txt" ]; then
-            PLUGINS=$(cat www/plugins.txt | grep -v '^//' | tr '\n' ' ' | tr -d '\r' | xargs)
+          echo '{"name": "native-bridge", "type": "module", "dependencies": {"@capacitor/core": "latest", "@capacitor/android": "latest", "esbuild": "latest"}}' > package.json
+          
+          echo "import { Capacitor, Plugins } from '@capacitor/core';" > bridge.js
+          echo "window.Capacitor = Capacitor;" >> bridge.js
+          echo "window.Capacitor.Plugins = Plugins;" >> bridge.js
+          
+          if [ -s "../www/plugins.txt" ]; then
+            PLUGINS=$(cat ../www/plugins.txt | grep -v '^//' | tr '\n' ' ' | tr -d '\r' | xargs)
             if [ -n "$PLUGINS" ]; then
               curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ github.event.inputs.id }}\", \"log\": \"[NPM] Installing Plugins: $PLUGINS\"}" "${{ github.event.inputs.logUrl }}"
               npm install $PLUGINS --save --no-audit --prefer-offline
@@ -118,42 +105,43 @@ jobs:
                 [[ $plugin = //* ]] && continue
                 [[ -z $plugin ]] && continue
                 safe_name=$(echo "$plugin" | sed -e 's/[^a-zA-Z0-9]/_/g')
-                echo "import * as Plugin$counter from '$plugin';" >> cap-bridge.js
-                echo "if(window.Capacitor.Plugins) { Object.assign(window.Capacitor.Plugins, Plugin$counter); }" >> cap-bridge.js
+                echo "import * as Plugin$counter from '$plugin';" >> bridge.js
+                echo "if(window.Capacitor.Plugins) { Object.assign(window.Capacitor.Plugins, Plugin$counter); }" >> bridge.js
                 ((counter++))
-              done < www/plugins.txt
+              done < ../www/plugins.txt
             fi
           fi
-
-          # 5. Install Dependencies (Silent)
-          npm install --no-audit --prefer-offline --legacy-peer-deps
-
-          # 6. Bundle Bridge menggunakan NPX ESBUILD (Perbaikan Utama)
-          # Menggunakan npx lebih aman daripada path hardcoded
+          
+          npm install --no-audit --prefer-offline --silent
+          
           curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ github.event.inputs.id }}\", \"log\": \"[BUILD] Bundling Native Bridge...\"}" "${{ github.event.inputs.logUrl }}"
-          npx esbuild cap-bridge.js --bundle --minify --outfile=www/native-bridge.js
-
-          # 7. Inject Script ke HTML
-          # Memastikan file index.html ada sebelum diedit
+          
+          ./node_modules/.bin/esbuild bridge.js --bundle --minify --outfile=../www/native-bridge.js --format=iife
+          
+          cd ..
+          rm -rf native_builder
+          
           if [ -f "www/index.html" ]; then
             sed -i 's|<head>|<head><script src="native-bridge.js"></script>|i' www/index.html
           else
-            echo "Warning: index.html not found in www/"
+            echo "::error::File index.html tidak ditemukan di dalam ZIP!"
+            exit 1
           fi
 
-      - name: Sync & Compile APK
+      - name: Build Android APK
         run: |
+          set -e
           npm install @capacitor/assets --no-audit --prefer-offline
           npx @capacitor/assets generate
           npx cap sync android
           
-          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ github.event.inputs.id }}\", \"log\": \"[BUILD] Compiling Android (Gradle)...\"}" "${{ github.event.inputs.logUrl }}"
+          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ github.event.inputs.id }}\", \"log\": \"[BUILD] Compiling Gradle...\"}" "${{ github.event.inputs.logUrl }}"
           
           cd android
           chmod +x gradlew
           ./gradlew assembleDebug --parallel --no-daemon --quiet
 
-      - name: Release Artifact
+      - name: Upload & Release
         id: create_release
         if: success()
         env:
@@ -162,20 +150,20 @@ jobs:
           SAFE_APP_NAME=$(echo "${{ github.event.inputs.appName }}" | tr ' ' '_')
           mv android/app/build/outputs/apk/debug/app-debug.apk "android/app/build/outputs/apk/debug/${SAFE_APP_NAME}.apk"
           gh release delete build-${{ github.event.inputs.id }} --cleanup-tag -y || true
-          gh release create build-${{ github.event.inputs.id }} "android/app/build/outputs/apk/debug/${SAFE_APP_NAME}.apk" --title "${{ github.event.inputs.appName }}" --notes "Built via App Studio"
+          gh release create build-${{ github.event.inputs.id }} "android/app/build/outputs/apk/debug/${SAFE_APP_NAME}.apk" --title "${{ github.event.inputs.appName }}" --notes "Auto-generated by App Studio"
 
-      - name: Notify System
+      - name: Notification
         if: always()
         run: |
           STATUS="failed"
           APK_URL=""
-          MSG="[ERROR] Build process failed."
+          MSG="[ERROR] Build process failed. Check logs."
           SAFE_APP_NAME=$(echo "${{ github.event.inputs.appName }}" | tr ' ' '_')
           
           if [ "${{ job.status }}" == "success" ]; then
              STATUS="success"
              APK_URL="https://github.com/${{ github.repository }}/releases/download/build-${{ github.event.inputs.id }}/${SAFE_APP_NAME}.apk"
-             MSG="[SUCCESS] APK Ready for Download."
+             MSG="[SUCCESS] APK Ready."
           fi
           
           curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ github.event.inputs.id }}\", \"log\": \"$MSG\"}" "${{ github.event.inputs.logUrl }}"
