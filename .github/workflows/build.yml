@@ -61,102 +61,85 @@ jobs:
 
       - name: Initialize Environment
         run: |
-          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ github.event.inputs.id }}\", \"log\": \"[SYSTEM] Initializing Build Engine...\"}" "${{ github.event.inputs.logUrl }}"
+          # Kirim Log Awal
+          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ github.event.inputs.id }}\", \"log\": \"[SYSTEM] Initializing Hybrid Engine...\"}" "${{ github.event.inputs.logUrl }}"
           
+          # Konfigurasi Capacitor
+          # Kita set webDir ke 'www' karena kita tidak pakai dist folder dari vite
           if [ "${{ github.event.inputs.mode }}" == "code" ]; then
-             jq '.appId = "${{ github.event.inputs.packageName }}" | .appName = "${{ github.event.inputs.appName }}" | .webDir = "dist" | del(.server.url)' capacitor.config.json > tmp.json && mv tmp.json capacitor.config.json
+             jq '.appId = "${{ github.event.inputs.packageName }}" | .appName = "${{ github.event.inputs.appName }}" | .webDir = "www" | del(.server.url)' capacitor.config.json > tmp.json && mv tmp.json capacitor.config.json
           else
              jq '.appId = "${{ github.event.inputs.packageName }}" | .appName = "${{ github.event.inputs.appName }}" | .server.url = "${{ github.event.inputs.url }}"' capacitor.config.json > tmp.json && mv tmp.json capacitor.config.json
           fi
 
+          # Update Android Resources (Nama App & Versi)
           sed -i 's/<string name="app_name">.*<\/string>/<string name="app_name">${{ github.event.inputs.appName }}<\/string>/g' android/app/src/main/res/values/strings.xml
           sed -i 's/versionCode [0-9]*/versionCode ${{ github.event.inputs.versionCode }}/g' android/app/build.gradle
           sed -i 's/versionName "[^"]*"/versionName "${{ github.event.inputs.versionName }}"/g' android/app/build.gradle
           
+          # Download Icon
           mkdir -p assets
           curl -L "${{ github.event.inputs.iconUrl }}" -o assets/icon.png
           cp assets/icon.png assets/splash.png
 
-      - name: Process Source & Build
+      - name: Process Source Code (No-Bundler Mode)
         if: ${{ github.event.inputs.mode == 'code' }}
         run: |
+          # 1. Decode Project ZIP
           echo "${{ github.event.inputs.projectZip }}" | base64 -d > project.zip
-          mkdir -p src_temp
-          unzip -o project.zip -d src_temp/
+          mkdir -p www
+          unzip -o project.zip -d www/
           
-          rm -f src_temp/package-lock.json src_temp/package.json
-          
+          # 2. Buat package.json minimal hanya untuk Capacitor & esbuild
+          # Kita TIDAK butuh angular/react/vue di sini karena pakai CDN
           cat << 'EOF' > package.json
           {
             "name": "apk-builder",
-            "type": "module",
-            "scripts": {
-              "build": "vite build"
-            },
             "dependencies": {
               "@capacitor/core": "latest",
-              "@capacitor/android": "latest"
-            },
-            "devDependencies": {
-              "vite": "^5.0.0",
-              "@vitejs/plugin-vue": "^5.0.0",
-              "@vitejs/plugin-react": "^4.2.0"
+              "@capacitor/android": "latest",
+              "esbuild": "latest"
             }
           }
           EOF
 
-          cat << 'EOF' > vite.config.js
-          import { defineConfig } from 'vite';
-          import vue from '@vitejs/plugin-vue';
-          import react from '@vitejs/plugin-react';
-
-          export default defineConfig({
-            plugins: [vue(), react()],
-            root: 'src_temp',
-            base: './',
-            build: {
-              outDir: '../dist',
-              emptyOutDir: true,
-              assetsDir: 'assets',
-              rollupOptions: {
-                external: ['angular', 'vue', 'react', 'react-dom'],
-                output: {
-                  entryFileNames: 'assets/[name]-[hash].js',
-                  chunkFileNames: 'assets/[name]-[hash].js',
-                  assetFileNames: 'assets/[name]-[hash].[ext]',
-                  format: 'es'
-                }
-              }
-            }
-          });
-          EOF
-
-          echo "import { Capacitor, Plugins } from '@capacitor/core';" > src_temp/bridge.js
-          echo "window.Capacitor = Capacitor;" >> src_temp/bridge.js
-          echo "window.Capacitor.Plugins = Plugins;" >> src_temp/bridge.js
+          # 3. Buat Script Bridge (Jembatan Komunikasi)
+          # Ini satu-satunya file yang akan kita bundle
+          echo "import { Capacitor, Plugins } from '@capacitor/core';" > cap-bridge.js
+          echo "window.Capacitor = Capacitor;" >> cap-bridge.js
+          echo "window.Capacitor.Plugins = Plugins;" >> cap-bridge.js
           
-          if [ -s "src_temp/plugins.txt" ]; then
-            PLUGINS=$(cat src_temp/plugins.txt | grep -v '^//' | tr '\n' ' ' | tr -d '\r' | xargs)
+          # 4. Install Plugin Capacitor Secara Dinamis
+          if [ -s "www/plugins.txt" ]; then
+            PLUGINS=$(cat www/plugins.txt | grep -v '^//' | tr '\n' ' ' | tr -d '\r' | xargs)
             if [ -n "$PLUGINS" ]; then
-              curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ github.event.inputs.id }}\", \"log\": \"[NPM] Installing Plugins: $PLUGINS\"}" "${{ github.event.inputs.logUrl }}"
+              curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ github.event.inputs.id }}\", \"log\": \"[NPM] Installing Native Plugins: $PLUGINS\"}" "${{ github.event.inputs.logUrl }}"
               npm install $PLUGINS --save --no-audit --prefer-offline
               
+              # Generate import untuk setiap plugin
               counter=0
               while read -r plugin; do
                 [[ $plugin = //* ]] && continue
                 [[ -z $plugin ]] && continue
                 safe_name=$(echo "$plugin" | sed -e 's/[^a-zA-Z0-9]/_/g')
-                echo "import * as Plugin$counter from '$plugin';" >> src_temp/bridge.js
-                echo "if(window.Capacitor.Plugins) { Object.assign(window.Capacitor.Plugins, Plugin$counter); }" >> src_temp/bridge.js
+                echo "import * as Plugin$counter from '$plugin';" >> cap-bridge.js
+                echo "if(window.Capacitor.Plugins) { Object.assign(window.Capacitor.Plugins, Plugin$counter); }" >> cap-bridge.js
                 ((counter++))
-              done < src_temp/plugins.txt
+              done < www/plugins.txt
             fi
           fi
 
-          sed -i 's|</head>|<script type="module" src="./bridge.js"></script></head>|i' src_temp/index.html
-          
+          # 5. Install Dependencies Utama
           npm install --no-audit --prefer-offline --legacy-peer-deps
-          npm run build
+
+          # 6. Bundle Bridge menggunakan ESBUILD (Bukan Vite)
+          # esbuild jauh lebih simpel untuk kasus single-file seperti ini
+          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ github.event.inputs.id }}\", \"log\": \"[BUILD] Linking Native Bridge...\"}" "${{ github.event.inputs.logUrl }}"
+          ./node_modules/.bin/esbuild cap-bridge.js --bundle --minify --outfile=www/native-bridge.js
+
+          # 7. Inject Script ke Index.html
+          # Kita taruh di paling atas <head> agar window.Capacitor siap sebelum script lain jalan
+          sed -i 's|<head>|<head><script src="native-bridge.js"></script>|i' www/index.html
 
       - name: Sync & Compile APK
         run: |
@@ -164,7 +147,7 @@ jobs:
           npx @capacitor/assets generate
           npx cap sync android
           
-          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ github.event.inputs.id }}\", \"log\": \"[BUILD] Compiling Native Android (Gradle)...\"}" "${{ github.event.inputs.logUrl }}"
+          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ github.event.inputs.id }}\", \"log\": \"[BUILD] Compiling Android APK...\"}" "${{ github.event.inputs.logUrl }}"
           
           cd android
           chmod +x gradlew
@@ -179,14 +162,14 @@ jobs:
           SAFE_APP_NAME=$(echo "${{ github.event.inputs.appName }}" | tr ' ' '_')
           mv android/app/build/outputs/apk/debug/app-debug.apk "android/app/build/outputs/apk/debug/${SAFE_APP_NAME}.apk"
           gh release delete build-${{ github.event.inputs.id }} --cleanup-tag -y || true
-          gh release create build-${{ github.event.inputs.id }} "android/app/build/outputs/apk/debug/${SAFE_APP_NAME}.apk" --title "${{ github.event.inputs.appName }}" --notes "Built via App Studio"
+          gh release create build-${{ github.event.inputs.id }} "android/app/build/outputs/apk/debug/${SAFE_APP_NAME}.apk" --title "${{ github.event.inputs.appName }}" --notes "Built with Hybrid Engine (CDN Support)"
 
       - name: Notify System
         if: always()
         run: |
           STATUS="failed"
           APK_URL=""
-          MSG="[ERROR] Build process interrupted."
+          MSG="[ERROR] Build process failed."
           SAFE_APP_NAME=$(echo "${{ github.event.inputs.appName }}" | tr ' ' '_')
           
           if [ "${{ job.status }}" == "success" ]; then
