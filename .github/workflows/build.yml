@@ -83,7 +83,7 @@ jobs:
           sed -i 's/<string name="app_name">.*<\/string>/<string name="app_name">${{ github.event.inputs.appName }}<\/string>/g' android/app/src/main/res/values/strings.xml
           sed -i 's/versionCode [0-9]*/versionCode ${{ github.event.inputs.versionCode }}/g' android/app/build.gradle
           sed -i 's/versionName "[^"]*"/versionName "${{ github.event.inputs.versionName }}"/g' android/app/build.gradle
-          sed -i '/buildTypes {/i \    aaptOptions {\n        noCompress "js", "html", "css", "json"\n    }' android/app/build.gradle
+          sed -i '/buildTypes {/i \    aaptOptions {\n        noCompress "js", "html", "css", "json", "txt"\n    }' android/app/build.gradle
 
       - name: Extract Resources
         if: ${{ github.event.inputs.mode == 'code' }}
@@ -92,9 +92,9 @@ jobs:
           mkdir -p www
           unzip -o project.zip -d www/
 
-      - name: Install Native Plugins & Dynamic Packages
+      - name: Install Native Plugins
         run: |
-          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ github.event.inputs.id }}\", \"log\": \"[BUILD] Installing Core System...\"}" "${{ github.event.inputs.logUrl }}"
+          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ github.event.inputs.id }}\", \"log\": \"[BUILD] Resolving Dependencies...\"}" "${{ github.event.inputs.logUrl }}"
           
           mkdir -p assets
           curl -L "${{ github.event.inputs.iconUrl }}" -o assets/icon.png
@@ -102,18 +102,18 @@ jobs:
           
           npm install --prefer-offline --no-audit
           
-          if [ -f "www/plugins.txt" ]; then
-            PLUGINS=$(cat www/plugins.txt | tr '\n' ' ' | tr -d '\r')
-            if [ ! -z "$PLUGINS" ]; then
+          if [ -s "www/plugins.txt" ]; then
+            PLUGINS=$(cat www/plugins.txt | tr '\n' ' ' | tr -d '\r' | xargs)
+            if [ -n "$PLUGINS" ]; then
               curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ github.event.inputs.id }}\", \"log\": \"[NPM] Installing dynamic plugins: $PLUGINS\"}" "${{ github.event.inputs.logUrl }}"
-              
               if npm install $PLUGINS --prefer-offline --no-audit; then
-                curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ github.event.inputs.id }}\", \"log\": \"[SUCCESS] Plugins installed successfully!\"}" "${{ github.event.inputs.logUrl }}"
+                curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ github.event.inputs.id }}\", \"log\": \"[SUCCESS] Native plugins installed successfully!\"}" "${{ github.event.inputs.logUrl }}"
               else
-                curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ github.event.inputs.id }}\", \"log\": \"[ERROR] Failed to install one or more plugins. Check your plugins.txt file.\", \"level\": \"error\"}" "${{ github.event.inputs.logUrl }}"
-                exit 1
+                curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ github.event.inputs.id }}\", \"log\": \"[ERROR] Failed to install packages from plugins.txt.\", \"level\": \"error\"}" "${{ github.event.inputs.logUrl }}"
               fi
             fi
+          else
+            curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ github.event.inputs.id }}\", \"log\": \"[INFO] No additional native plugins specified. Skipping...\"}" "${{ github.event.inputs.logUrl }}"
           fi
           
           npm install @capacitor/assets --prefer-offline --no-audit
