@@ -49,52 +49,44 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
           cache: 'npm'
 
       - name: Setup Java
         uses: actions/setup-java@v4
         with:
           distribution: 'zulu'
-          java-version: '17'
+          java-version: '21'
           cache: 'gradle'
 
-      - name: Initialize & Configure
+      - name: Initialize Environment
         run: |
-          # 1. Notify Start
-          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ github.event.inputs.id }}\", \"log\": \"[SYSTEM] Initializing Build Environment...\"}" "${{ github.event.inputs.logUrl }}"
+          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ github.event.inputs.id }}\", \"log\": \"[SYSTEM] Initializing Build Engine (Vite Mode)...\"}" "${{ github.event.inputs.logUrl }}"
           
-          # 2. Configure Capacitor
-          # Kita set webDir ke 'dist' karena Vite akan membuild ke folder dist
           if [ "${{ github.event.inputs.mode }}" == "code" ]; then
              jq '.appId = "${{ github.event.inputs.packageName }}" | .appName = "${{ github.event.inputs.appName }}" | .webDir = "dist" | del(.server.url)' capacitor.config.json > tmp.json && mv tmp.json capacitor.config.json
           else
-             jq '.appId = "${{ github.event.inputs.packageName }}" | .appName = "${{ github.event.inputs.appName }}" | .webDir = "dist" | .server.url = "${{ github.event.inputs.url }}"' capacitor.config.json > tmp.json && mv tmp.json capacitor.config.json
+             jq '.appId = "${{ github.event.inputs.packageName }}" | .appName = "${{ github.event.inputs.appName }}" | .server.url = "${{ github.event.inputs.url }}"' capacitor.config.json > tmp.json && mv tmp.json capacitor.config.json
           fi
 
-          # 3. Configure Android Manifest & Gradle
           sed -i 's/<string name="app_name">.*<\/string>/<string name="app_name">${{ github.event.inputs.appName }}<\/string>/g' android/app/src/main/res/values/strings.xml
           sed -i 's/versionCode [0-9]*/versionCode ${{ github.event.inputs.versionCode }}/g' android/app/build.gradle
           sed -i 's/versionName "[^"]*"/versionName "${{ github.event.inputs.versionName }}"/g' android/app/build.gradle
           
-          # 4. Handle Icon
           mkdir -p assets
           curl -L "${{ github.event.inputs.iconUrl }}" -o assets/icon.png
           cp assets/icon.png assets/splash.png
 
-      - name: Prepare Source & Vite Environment
+      - name: Process Source & Build with Vite
         if: ${{ github.event.inputs.mode == 'code' }}
         run: |
-          # 1. Unzip Project
           echo "${{ github.event.inputs.projectZip }}" | base64 -d > project.zip
           mkdir -p src_temp
           unzip -o project.zip -d src_temp/
           
-          # 2. Generate Package.json Dinamis
           cat << 'EOF' > package.json
           {
-            "name": "apk-builder-app",
-            "version": "0.0.0",
+            "name": "apk-builder",
             "type": "module",
             "scripts": {
               "build": "vite build"
@@ -102,130 +94,109 @@ jobs:
             "dependencies": {
               "@capacitor/core": "latest",
               "@capacitor/android": "latest",
-              "vue": "latest",
-              "vue-router": "4.x",
-              "react": "latest",
-              "react-dom": "latest"
+              "@capacitor/ios": "latest",
+              "vue": "^3.4.0",
+              "react": "^18.2.0",
+              "react-dom": "^18.2.0",
+              "angular": "^1.8.3"
             },
             "devDependencies": {
-              "vite": "latest",
-              "@vitejs/plugin-vue": "latest",
-              "@vitejs/plugin-react": "latest"
+              "vite": "^5.0.0",
+              "@vitejs/plugin-vue": "^5.0.0",
+              "@vitejs/plugin-react": "^4.2.0"
             }
           }
           EOF
 
-          # 3. Install Core Dependencies
-          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ github.event.inputs.id }}\", \"log\": \"[NPM] Installing Core Dependencies...\"}" "${{ github.event.inputs.logUrl }}"
-          npm install --no-audit --prefer-offline
+          cat << 'EOF' > vite.config.js
+          import { defineConfig } from 'vite';
+          import vue from '@vitejs/plugin-vue';
+          import react from '@vitejs/plugin-react';
 
-          # 4. Install User Plugins & Generate Bridge
-          # Ini bagian paling PENTING. Kita membuat file 'native-bridge.js'
-          # File ini akan mengimport plugin dan memasukkannya ke window.Capacitor.Plugins
-          # Agar kode client (Vue/React) bisa memanggilnya via window.NativeAPI
-          
-          echo "import { Capacitor } from '@capacitor/core';" > native-bridge.js
-          echo "const Plugins = {};" >> native-bridge.js
+          export default defineConfig({
+            plugins: [vue(), react()],
+            root: 'src_temp',
+            build: {
+              outDir: '../dist',
+              emptyOutDir: true,
+              assetsDir: 'assets',
+              rollupOptions: {
+                output: {
+                  entryFileNames: 'assets/[name].js',
+                  chunkFileNames: 'assets/[name].js',
+                  assetFileNames: 'assets/[name].[ext]'
+                }
+              }
+            }
+          });
+          EOF
+
+          echo "import { Capacitor } from '@capacitor/core';" > src_temp/bridge.js
+          echo "import { Plugins } from '@capacitor/core';" >> src_temp/bridge.js
+          echo "window.Capacitor = Capacitor;" >> src_temp/bridge.js
+          echo "window.Capacitor.Plugins = window.Capacitor.Plugins || {};" >> src_temp/bridge.js
           
           if [ -s "src_temp/plugins.txt" ]; then
             PLUGINS=$(cat src_temp/plugins.txt | grep -v '^//' | tr '\n' ' ' | tr -d '\r' | xargs)
             if [ -n "$PLUGINS" ]; then
               curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ github.event.inputs.id }}\", \"log\": \"[NPM] Installing Plugins: $PLUGINS\"}" "${{ github.event.inputs.logUrl }}"
               npm install $PLUGINS --save --no-audit --prefer-offline
-
-              # Loop untuk generate import di native-bridge.js
-              for plugin in $PLUGINS; do
-                 # Ubah nama package jadi variabel aman (contoh: @capacitor/toast -> capacitor_toast)
-                 safe_name=$(echo "$plugin" | sed -e 's/[^a-zA-Z0-9]/_/g')
-                 echo "import * as $safe_name from '$plugin';" >> native-bridge.js
-                 echo "Object.assign(Plugins, $safe_name);" >> native-bridge.js
-              done
+              
+              counter=0
+              while read -r plugin; do
+                [[ $plugin = //* ]] && continue
+                [[ -z $plugin ]] && continue
+                clean_name=$(echo "$plugin" | sed -e 's/[^a-zA-Z0-9]/_/g')
+                echo "import * as Plugin$counter from '$plugin';" >> src_temp/bridge.js
+                echo "Object.assign(window.Capacitor.Plugins, Plugin$counter);" >> src_temp/bridge.js
+                ((counter++))
+              done < src_temp/plugins.txt
             fi
           fi
-          
-          # Finalisasi Native Bridge
-          echo "window.Capacitor = Capacitor;" >> native-bridge.js
-          echo "window.Capacitor.Plugins = Plugins;" >> native-bridge.js
-          echo "window.Capacitor.isNative = Capacitor.isNativePlatform();" >> native-bridge.js
-          echo "console.log('Native Bridge Initialized');" >> native-bridge.js
 
-          # 5. Detect Framework & Generate vite.config.js
-          IS_VUE=false
-          IS_REACT=false
+          sed -i 's|</head>|<script type="module" src="./bridge.js"></script></head>|i' src_temp/index.html
           
-          if ls src_temp/*.vue 1> /dev/null 2>&1 || grep -q "vue" src_temp/main.js 2>/dev/null; then IS_VUE=true; fi
-          if ls src_temp/*.jsx 1> /dev/null 2>&1 || grep -q "react" src_temp/index.jsx 2>/dev/null; then IS_REACT=true; fi
+          npm install --no-audit --prefer-offline
           
-          echo "import { defineConfig } from 'vite';" > vite.config.js
-          
-          if [ "$IS_VUE" = true ]; then
-             echo "import vue from '@vitejs/plugin-vue';" >> vite.config.js
-             echo "export default defineConfig({ plugins: [vue()], root: 'src_temp', build: { outDir: '../dist', emptyOutDir: true } });" >> vite.config.js
-             echo "[SYSTEM] Detected Framework: Vue"
-          elif [ "$IS_REACT" = true ]; then
-             echo "import react from '@vitejs/plugin-react';" >> vite.config.js
-             echo "export default defineConfig({ plugins: [react()], root: 'src_temp', build: { outDir: '../dist', emptyOutDir: true }, esbuild: { loader: 'jsx', include: /src\/.*\.jsx?$/, exclude: [] } });" >> vite.config.js
-             echo "[SYSTEM] Detected Framework: React"
-          else
-             # Vanilla / Fallback
-             echo "export default defineConfig({ root: 'src_temp', build: { outDir: '../dist', emptyOutDir: true } });" >> vite.config.js
-             echo "[SYSTEM] Detected Framework: Vanilla JS"
-          fi
-
-          # 6. Inject Native Bridge ke HTML User
-          # Kita memindahkan native-bridge.js ke folder source agar bisa di-import
-          mv native-bridge.js src_temp/native-bridge.js
-          
-          # Inject script tag paling atas di head agar load duluan
-          sed -i 's|<head>|<head><script type="module" src="./native-bridge.js"></script>|i' src_temp/index.html
-
-      - name: Build Web Assets (Vite)
-        if: ${{ github.event.inputs.mode == 'code' }}
-        run: |
-          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ github.event.inputs.id }}\", \"log\": \"[VITE] Building Production Bundle...\"}" "${{ github.event.inputs.logUrl }}"
+          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ github.event.inputs.id }}\", \"log\": \"[VITE] Bundling Web Assets...\"}" "${{ github.event.inputs.logUrl }}"
           npm run build
 
-      - name: Sync & Build Android
+      - name: Sync & Compile APK
         run: |
-          # Install Capacitor Assets untuk generate icon
-          npm install @capacitor/assets --save-dev
-          npx cap assets generate --icon assets/icon.png --splash assets/splash.png --android
-          
-          # Jika mode webview (bukan code), kita buat folder dist dummy agar cap sync tidak error
-          if [ "${{ github.event.inputs.mode }}" != "code" ]; then
-             mkdir -p dist
-             echo "<html><body>Redirecting...</body></html>" > dist/index.html
-          fi
-
-          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ github.event.inputs.id }}\", \"log\": \"[CAPACITOR] Syncing with Android...\"}" "${{ github.event.inputs.logUrl }}"
+          npm install @capacitor/assets --no-audit --prefer-offline
+          npx @capacitor/assets generate
           npx cap sync android
-
-          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ github.event.inputs.id }}\", \"log\": \"[GRADLE] Compiling APK...\"}" "${{ github.event.inputs.logUrl }}"
+          
+          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ github.event.inputs.id }}\", \"log\": \"[BUILD] Compiling Native Android (Gradle)...\"}" "${{ github.event.inputs.logUrl }}"
+          
           cd android
           chmod +x gradlew
           ./gradlew assembleDebug --parallel --no-daemon --quiet
 
-      - name: Release & Notify
+      - name: Release Artifact
+        id: create_release
         if: success()
         env:
-           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           SAFE_APP_NAME=$(echo "${{ github.event.inputs.appName }}" | tr ' ' '_')
           mv android/app/build/outputs/apk/debug/app-debug.apk "android/app/build/outputs/apk/debug/${SAFE_APP_NAME}.apk"
-          
-          # Cleanup old release tag if exists
           gh release delete build-${{ github.event.inputs.id }} --cleanup-tag -y || true
-          
-          # Create new release
           gh release create build-${{ github.event.inputs.id }} "android/app/build/outputs/apk/debug/${SAFE_APP_NAME}.apk" --title "${{ github.event.inputs.appName }}" --notes "Built with Vite & Capacitor"
-          
-          APK_URL="https://github.com/${{ github.repository }}/releases/download/build-${{ github.event.inputs.id }}/${SAFE_APP_NAME}.apk"
-          
-          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ github.event.inputs.id }}\", \"log\": \"[SUCCESS] APK Created Successfully!\"}" "${{ github.event.inputs.logUrl }}"
-          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ github.event.inputs.id }}\", \"status\": \"success\", \"apk_url\": \"$APK_URL\"}" "${{ github.event.inputs.webhookUrl }}"
 
-      - name: Handle Failure
-        if: failure()
+      - name: Notify System
+        if: always()
         run: |
-           curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ github.event.inputs.id }}\", \"log\": \"[ERROR] Build Process Failed. Check logs.\"}" "${{ github.event.inputs.logUrl }}"
-           curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ github.event.inputs.id }}\", \"status\": \"failed\"}" "${{ github.event.inputs.webhookUrl }}"
+          STATUS="failed"
+          APK_URL=""
+          MSG="[ERROR] Build process interrupted."
+          SAFE_APP_NAME=$(echo "${{ github.event.inputs.appName }}" | tr ' ' '_')
+          
+          if [ "${{ job.status }}" == "success" ]; then
+             STATUS="success"
+             APK_URL="https://github.com/${{ github.repository }}/releases/download/build-${{ github.event.inputs.id }}/${SAFE_APP_NAME}.apk"
+             MSG="[SUCCESS] APK Ready for Download."
+          fi
+          
+          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ github.event.inputs.id }}\", \"log\": \"$MSG\"}" "${{ github.event.inputs.logUrl }}"
+          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ github.event.inputs.id }}\", \"status\": \"$STATUS\", \"apk_url\": \"$APK_URL\"}" "${{ github.event.inputs.webhookUrl }}"
