@@ -54,6 +54,7 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '22'
+          cache: 'npm'
 
       - name: Setup Java
         uses: actions/setup-java@v4
@@ -67,18 +68,17 @@ jobs:
           curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ github.event.inputs.id }}\", \"log\": \"[SYSTEM] Initializing Repo Engine & Resolving Dependencies...\"}" "${{ github.event.inputs.logUrl }}"
           
           if [ "${{ github.event.inputs.mode }}" == "code" ]; then
-             jq '.appId = "${{ github.event.inputs.packageName }}" | .appName = "${{ github.event.inputs.appName }}" | .webDir = "www" | del(.server.url)' capacitor.config.json > tmp.json && mv tmp.json capacitor.config.json
+              jq '.appId = "${{ github.event.inputs.packageName }}" | .appName = "${{ github.event.inputs.appName }}" | .webDir = "www" | del(.server.url)' capacitor.config.json > tmp.json && mv tmp.json capacitor.config.json
           else
-             jq '.appId = "${{ github.event.inputs.packageName }}" | .appName = "${{ github.event.inputs.appName }}" | .server.url = "${{ github.event.inputs.url }}"' capacitor.config.json > tmp.json && mv tmp.json capacitor.config.json
+              jq '.appId = "${{ github.event.inputs.packageName }}" | .appName = "${{ github.event.inputs.appName }}" | .server.url = "${{ github.event.inputs.url }}"' capacitor.config.json > tmp.json && mv tmp.json capacitor.config.json
           fi
 
-          # Ini wajib berjalan di setiap build karena inputnya dinamis (berubah-ubah tergantung data dari web UI)
           sed -i 's/<string name="app_name">.*<\/string>/<string name="app_name">${{ github.event.inputs.appName }}<\/string>/g' android/app/src/main/res/values/strings.xml
           sed -i 's/versionCode [0-9]*/versionCode ${{ github.event.inputs.versionCode }}/g' android/app/build.gradle
           sed -i 's/versionName "[^"]*"/versionName "${{ github.event.inputs.versionName }}"/g' android/app/build.gradle
           
           mkdir -p assets
-          curl -L "${{ github.event.inputs.iconUrl }}" -o assets/icon.png
+          curl -sL "${{ github.event.inputs.iconUrl }}" -o assets/icon.png
           cp assets/icon.png assets/splash.png
 
       - name: Process Source & Native Bridge Injection
@@ -86,18 +86,16 @@ jobs:
         run: |
           set -e
           echo "${{ github.event.inputs.projectZip }}" | base64 -d > project.zip
-          unzip -o project.zip -d www/
+          unzip -q -o project.zip -d www/
           
           if [ -f "www/package.json" ]; then
-              # Install deps di ROOT agar tersinkronisasi ke Android Gradle
               DEPS=$(jq -r '.dependencies | keys[]?' www/package.json | grep "@capacitor" | tr '\n' ' ')
               if [ ! -z "$DEPS" ]; then
-                  npm install $DEPS
+                  npm install $DEPS --no-audit --no-fund --prefer-offline
               fi
               
-              # Setup JS Bridge di dalam direktori Web
               cd www
-              npm install
+              npm install --no-audit --no-fund --prefer-offline
               
               node -e "
               const fs = require('fs');
@@ -122,21 +120,21 @@ jobs:
               sed -i 's|</body>|<script src="native-bridge.js"></script></body>|i' index.html
               cd ..
           else
-              npm install @capacitor/core @capacitor/android esbuild
+              npm install @capacitor/core @capacitor/android esbuild --no-audit --no-fund --prefer-offline
           fi
 
       - name: Compile App
         run: |
           set -e
-          npm install @capacitor/assets @capacitor/cli
+          npm install @capacitor/assets @capacitor/cli --no-audit --no-fund --prefer-offline
           npx @capacitor/assets generate --iconBackgroundColor '#ffffff' --splashBackgroundColor '#ffffff'
           npx cap sync android
           cd android
           chmod +x gradlew
           if [ "${{ github.event.inputs.buildFormat }}" == "aab" ]; then
-              ./gradlew bundleDebug --no-daemon
+              ./gradlew bundleDebug --parallel --build-cache --configure-on-demand --no-daemon
           else
-              ./gradlew assembleDebug --no-daemon
+              ./gradlew assembleDebug --parallel --build-cache --configure-on-demand --no-daemon
           fi
 
       - name: Release Artifact
