@@ -5,43 +5,18 @@ run-name: Build ${{ inputs.appName }}
 on:
   workflow_dispatch:
     inputs:
-      id:
-        required: true
-        type: string
-      appName:
-        required: true
-        type: string
-      packageName:
-        required: true
-        type: string
-      versionCode:
-        required: true
-        type: string
-      versionName:
-        required: true
-        type: string
-      iconUrl:
-        required: true
-        type: string
-      webhookUrl:
-        required: true
-        type: string
-      logUrl:
-        required: true
-        type: string
-      mode:
-        required: true
-        type: string
-      url:
-        required: false
-        type: string
-      projectZip:
-        required: false
-        type: string
-      buildFormat:
-        required: false
-        type: string
-        default: 'apk'
+      id: { required: true, type: string }
+      appName: { required: true, type: string }
+      packageName: { required: true, type: string }
+      versionCode: { required: true, type: string }
+      versionName: { required: true, type: string }
+      iconUrl: { required: true, type: string }
+      webhookUrl: { required: true, type: string }
+      logUrl: { required: true, type: string }
+      mode: { required: true, type: string }
+      url: { required: false, type: string }
+      projectZip: { required: false, type: string }
+      buildFormat: { required: false, type: string, default: 'apk' }
 
 permissions:
   contents: write
@@ -63,17 +38,26 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '22'
+          cache: 'npm'
 
       - name: Setup Java
         uses: actions/setup-java@v4
         with:
           distribution: 'zulu'
           java-version: '21'
+          cache: 'gradle'
+
+      - name: Optimize Gradle Configuration
+        run: |
+          mkdir -p ~/.gradle
+          echo "org.gradle.jvmargs=-Xmx3g -XX:+HeapDumpOnOutOfMemoryError -Dfile.encoding=UTF-8" >> ~/.gradle/gradle.properties
+          echo "org.gradle.caching=true" >> ~/.gradle/gradle.properties
+          echo "org.gradle.parallel=true" >> ~/.gradle/gradle.properties
+          echo "org.gradle.daemon=true" >> ~/.gradle/gradle.properties
 
       - name: Configuration Injection
         run: |
-          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[${{ env.BUILDER_NAME }}] Menyiapkan Secure Cloud Container...\"}" "${{ inputs.logUrl }}"
-          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[${{ env.BUILDER_NAME }}] Menyiapkan Konfigurasi Aplikasi...\"}" "${{ inputs.logUrl }}"
+          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[${{ env.BUILDER_NAME }}] Menyiapkan Cloud Container...\"}" "${{ inputs.logUrl }}"
           
           if [ "${{ inputs.mode }}" == "code" ]; then
               jq '.appId = "${{ inputs.packageName }}" | .appName = "${{ inputs.appName }}" | .webDir = "www" | del(.server.url)' capacitor.config.json > tmp.json && mv tmp.json capacitor.config.json
@@ -84,11 +68,9 @@ jobs:
           MAIN_ACTIVITY=$(find android/app/src/main/java -name "MainActivity.java" | head -n 1)
           if [ ! -z "$MAIN_ACTIVITY" ]; then
               OLD_PACKAGE=$(grep -o 'package .*;' "$MAIN_ACTIVITY" | sed 's/package //; s/;//' | tr -d '\r' | tr -d ' ')
-              
               if [ ! -z "$OLD_PACKAGE" ]; then
                   find android/app -type f \( -name "*.xml" -o -name "*.gradle" -o -name "*.java" \) -exec sed -i "s/$OLD_PACKAGE/${{ inputs.packageName }}/g" {} +
               fi
-              
               NEW_DIR="android/app/src/main/java/$(echo ${{ inputs.packageName }} | tr '.' '/')"
               mkdir -p "$NEW_DIR"
               if [ "$MAIN_ACTIVITY" != "$NEW_DIR/MainActivity.java" ]; then
@@ -108,7 +90,6 @@ jobs:
         if: ${{ inputs.mode == 'code' }}
         run: |
           set -e
-          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[${{ env.BUILDER_NAME }}] Mengintegrasikan Source Code...\"}" "${{ inputs.logUrl }}"
           echo "${{ inputs.projectZip }}" | base64 -d > project.zip
           unzip -q -o project.zip -d www/
           if [ -f "www/package.json" ]; then
@@ -122,15 +103,11 @@ jobs:
               const fs = require('fs');
               const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
               const deps = Object.keys(pkg.dependencies || {});
-              let code = \"import { Capacitor } from '@capacitor/core';\n\";
-              code += \"window.Capacitor = window.Capacitor || Capacitor;\n\";
-              code += \"window.Capacitor.isNative = true;\n\";
-              code += \"window.Capacitor.Plugins = window.Capacitor.Plugins || {};\n\";
+              let code = \"import { Capacitor } from '@capacitor/core';\nwindow.Capacitor = window.Capacitor || Capacitor;\nwindow.Capacitor.isNative = true;\nwindow.Capacitor.Plugins = window.Capacitor.Plugins || {};\n\";
               let pIdx = 0;
               deps.forEach(dep => {
                   if (dep.startsWith('@capacitor/') && dep !== '@capacitor/core' && dep !== '@capacitor/android') {
-                      code += \"import * as P\" + pIdx + \" from '\" + dep + \"';\n\";
-                      code += \"Object.assign(window.Capacitor.Plugins, P\" + pIdx + \");\n\";
+                      code += \"import * as P\" + pIdx + \" from '\" + dep + \"';\nObject.assign(window.Capacitor.Plugins, P\" + pIdx + \");\n\";
                       pIdx++;
                   }
               });
@@ -146,17 +123,18 @@ jobs:
       - name: Compile App
         run: |
           set -e
+          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[${{ env.BUILDER_NAME }}] Sinkronisasi Assets & Native Code...\"}" "${{ inputs.logUrl }}"
           npm install @capacitor/assets @capacitor/cli --no-audit --no-fund --prefer-offline
           npx @capacitor/assets generate --iconBackgroundColor '#ffffff' --splashBackgroundColor '#ffffff'
           npx cap sync android
           
-          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[${{ env.BUILDER_NAME }}] Sedang Membuat ${{ env.BUILD_EXT }}... Harap tunggu beberapa menit.\"}" "${{ inputs.logUrl }}"
+          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[${{ env.BUILDER_NAME }}] Sedang Compile ${{ env.BUILD_EXT }}...\"}" "${{ inputs.logUrl }}"
           cd android
           chmod +x gradlew
           if [ "${{ inputs.buildFormat }}" == "aab" ]; then
-              ./gradlew bundleDebug --parallel --build-cache --configure-on-demand --no-daemon
+              ./gradlew bundleDebug --parallel --build-cache --configure-on-demand
           else
-              ./gradlew assembleDebug --parallel --build-cache --configure-on-demand --no-daemon
+              ./gradlew assembleDebug --parallel --build-cache --configure-on-demand
           fi
 
       - name: Release Artifact
@@ -164,7 +142,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[${{ env.BUILDER_NAME }}] Finalisasi & Signing Package...\"}" "${{ inputs.logUrl }}"
+          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[${{ env.BUILDER_NAME }}] Finalisasi Package...\"}" "${{ inputs.logUrl }}"
           SAFE_NAME=$(echo "${{ inputs.appName }}" | tr ' ' '_')
           gh release delete build-${{ inputs.id }} --cleanup-tag -y || true
           if [ "${{ inputs.buildFormat }}" == "aab" ]; then
@@ -175,14 +153,10 @@ jobs:
               gh release create build-${{ inputs.id }} "android/app/build/outputs/apk/debug/${SAFE_NAME}.apk" --title "${{ inputs.appName }}"
           fi
 
-      - name: Cleanup Workflows & Cache
+      - name: Cleanup
         if: always()
         run: |
-          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[${{ env.BUILDER_NAME }}] Membersihkan Workspace...\"}" "${{ inputs.logUrl }}"
-          rm -rf android/app/build
-          rm -rf www
-          rm -rf node_modules
-          npm cache clean --force || true
+          rm -rf android/app/build www node_modules || true
 
       - name: Notify System
         if: always()
