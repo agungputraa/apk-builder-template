@@ -81,34 +81,24 @@ jobs:
               jq '.appId = "${{ inputs.packageName }}" | .appName = "${{ inputs.appName }}" | .server.url = "${{ inputs.url }}"' capacitor.config.json > tmp.json && mv tmp.json capacitor.config.json
           fi
           
-          sed -i 's/<string name="app_name">.*<\/string>/<string name="app_name">${{ inputs.appName }}<\/string>/g' android/app/src/main/res/values/strings.xml
-          sed -i 's/versionCode [0-9]*/versionCode ${{ inputs.versionCode }}/g' android/app/build.gradle
-          sed -i 's/versionName "[^"]*"/versionName "${{ inputs.versionName }}"/g' android/app/build.gradle
-          
-          sed -i "s/applicationId \"[^\"]*\"/applicationId \"${{ inputs.packageName }}\"/g" android/app/build.gradle
-          sed -i "s/namespace \"[^\"]*\"/namespace \"${{ inputs.packageName }}\"/g" android/app/build.gradle
-          sed -i "s/package=\"[^\"]*\"/package=\"${{ inputs.packageName }}\"/g" android/app/src/main/AndroidManifest.xml
-          
           MAIN_ACTIVITY=$(find android/app/src/main/java -name "MainActivity.java" | head -n 1)
           if [ ! -z "$MAIN_ACTIVITY" ]; then
-              # Ekstrak nama package lama secara dinamis
-              OLD_PACKAGE=$(grep "^package " "$MAIN_ACTIVITY" | awk '{print $2}' | tr -d ';')
+              OLD_PACKAGE=$(grep -o 'package .*;' "$MAIN_ACTIVITY" | sed 's/package //; s/;//' | tr -d '\r' | tr -d ' ')
               
-              # Ganti package di dalam MainActivity.java
-              sed -i "s/package .*/package ${{ inputs.packageName }};/g" "$MAIN_ACTIVITY"
-              
-              # Ganti semua referensi package lama menjadi baru di AndroidManifest.xml
               if [ ! -z "$OLD_PACKAGE" ]; then
-                  sed -i "s/$OLD_PACKAGE/${{ inputs.packageName }}/g" android/app/src/main/AndroidManifest.xml
+                  find android/app -type f \( -name "*.xml" -o -name "*.gradle" -o -name "*.java" \) -exec sed -i "s/$OLD_PACKAGE/${{ inputs.packageName }}/g" {} +
               fi
               
-              # Pindahkan MainActivity.java ke struktur folder package yang baru
               NEW_DIR="android/app/src/main/java/$(echo ${{ inputs.packageName }} | tr '.' '/')"
               mkdir -p "$NEW_DIR"
               if [ "$MAIN_ACTIVITY" != "$NEW_DIR/MainActivity.java" ]; then
                   mv "$MAIN_ACTIVITY" "$NEW_DIR/"
               fi
           fi
+          
+          sed -i 's/<string name="app_name">.*<\/string>/<string name="app_name">${{ inputs.appName }}<\/string>/g' android/app/src/main/res/values/strings.xml
+          sed -i -E 's/versionCode [0-9]+/versionCode ${{ inputs.versionCode }}/g' android/app/build.gradle
+          sed -i -E 's/versionName "[^"]*"/versionName "${{ inputs.versionName }}"/g' android/app/build.gradle
           
           mkdir -p assets
           curl -sL "${{ inputs.iconUrl }}" -o assets/icon.png
