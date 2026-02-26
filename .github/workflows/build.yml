@@ -66,17 +66,14 @@ jobs:
       - name: Configuration Injection
         run: |
           curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ github.event.inputs.id }}\", \"log\": \"[SYSTEM] Initializing Repo Engine & Resolving Dependencies...\"}" "${{ github.event.inputs.logUrl }}"
-          
           if [ "${{ github.event.inputs.mode }}" == "code" ]; then
               jq '.appId = "${{ github.event.inputs.packageName }}" | .appName = "${{ github.event.inputs.appName }}" | .webDir = "www" | del(.server.url)' capacitor.config.json > tmp.json && mv tmp.json capacitor.config.json
           else
               jq '.appId = "${{ github.event.inputs.packageName }}" | .appName = "${{ github.event.inputs.appName }}" | .server.url = "${{ github.event.inputs.url }}"' capacitor.config.json > tmp.json && mv tmp.json capacitor.config.json
           fi
-
           sed -i 's/<string name="app_name">.*<\/string>/<string name="app_name">${{ github.event.inputs.appName }}<\/string>/g' android/app/src/main/res/values/strings.xml
           sed -i 's/versionCode [0-9]*/versionCode ${{ github.event.inputs.versionCode }}/g' android/app/build.gradle
           sed -i 's/versionName "[^"]*"/versionName "${{ github.event.inputs.versionName }}"/g' android/app/build.gradle
-          
           mkdir -p assets
           curl -sL "${{ github.event.inputs.iconUrl }}" -o assets/icon.png
           cp assets/icon.png assets/splash.png
@@ -87,16 +84,13 @@ jobs:
           set -e
           echo "${{ github.event.inputs.projectZip }}" | base64 -d > project.zip
           unzip -q -o project.zip -d www/
-          
           if [ -f "www/package.json" ]; then
               DEPS=$(jq -r '.dependencies | keys[]?' www/package.json | grep "@capacitor" | tr '\n' ' ')
               if [ ! -z "$DEPS" ]; then
                   npm install $DEPS --no-audit --no-fund --prefer-offline
               fi
-              
               cd www
               npm install --no-audit --no-fund --prefer-offline
-              
               node -e "
               const fs = require('fs');
               const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
@@ -115,7 +109,6 @@ jobs:
               });
               fs.writeFileSync('bridge.js', code);
               "
-              
               npx esbuild bridge.js --bundle --minify --outfile=native-bridge.js --format=iife
               sed -i 's|</body>|<script src="native-bridge.js"></script></body>|i' index.html
               cd ..
