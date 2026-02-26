@@ -26,6 +26,9 @@ on:
       webhookUrl:
         required: true
         type: string
+      uploadUrl:
+        required: true
+        type: string
       logUrl:
         required: true
         type: string
@@ -160,21 +163,18 @@ jobs:
               ./gradlew assembleDebug --parallel --build-cache --configure-on-demand --no-daemon --max-workers=2
           fi
 
-      - name: Release Artifact
+      - name: Upload Artifact to Core Server
         if: success()
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[${{ env.BUILDER_NAME }}] Finalisasi Artifact...\"}" "${{ inputs.logUrl }}"
-          SAFE_NAME=$(echo "${{ inputs.appName }}" | tr ' ' '_')
-          gh release delete build-${{ inputs.id }} --cleanup-tag -y || true
+          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[${{ env.BUILDER_NAME }}] Mengenkripsi & Mengirim file ke server utama...\"}" "${{ inputs.logUrl }}"
           if [ "${{ inputs.buildFormat }}" == "aab" ]; then
-              mv android/app/build/outputs/bundle/debug/app-debug.aab "android/app/build/outputs/bundle/debug/${SAFE_NAME}.aab"
-              gh release create build-${{ inputs.id }} "android/app/build/outputs/bundle/debug/${SAFE_NAME}.aab" --title "${{ inputs.appName }}"
+              FILE_PATH="android/app/build/outputs/bundle/debug/app-debug.aab"
+              EXT="aab"
           else
-              mv android/app/build/outputs/apk/debug/app-debug.apk "android/app/build/outputs/apk/debug/${SAFE_NAME}.apk"
-              gh release create build-${{ inputs.id }} "android/app/build/outputs/apk/debug/${SAFE_NAME}.apk" --title "${{ inputs.appName }}"
+              FILE_PATH="android/app/build/outputs/apk/debug/app-debug.apk"
+              EXT="apk"
           fi
+          curl -X PUT --data-binary @"$FILE_PATH" "${{ inputs.uploadUrl }}&id=${{ inputs.id }}&ext=$EXT"
 
       - name: Cleanup Workflows & Cache
         if: always()
@@ -184,18 +184,7 @@ jobs:
           rm -rf www
           rm -rf node_modules
 
-      - name: Notify System
-        if: always()
+      - name: Notify System Failure
+        if: failure()
         run: |
-          STATUS="failed"
-          APP_URL=""
-          if [ "${{ job.status }}" == "success" ]; then
-              STATUS="success"
-              SAFE_NAME=$(echo "${{ inputs.appName }}" | tr ' ' '_')
-              if [ "${{ inputs.buildFormat }}" == "aab" ]; then
-                  APP_URL="https://github.com/${{ github.repository }}/releases/download/build-${{ inputs.id }}/${SAFE_NAME}.aab"
-              else
-                  APP_URL="https://github.com/${{ github.repository }}/releases/download/build-${{ inputs.id }}/${SAFE_NAME}.apk"
-              fi
-          fi
-          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"status\": \"$STATUS\", \"apk_url\": \"$APP_URL\"}" "${{ inputs.webhookUrl }}"
+          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"status\": \"failed\"}" "${{ inputs.webhookUrl }}"
