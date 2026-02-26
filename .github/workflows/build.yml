@@ -1,5 +1,7 @@
 name: Pro APK Builder
 
+run-name: Build ${{ inputs.appName }}
+
 on:
   workflow_dispatch:
     inputs:
@@ -54,35 +56,52 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '22'
-          cache: 'npm'
 
       - name: Setup Java
         uses: actions/setup-java@v4
         with:
           distribution: 'zulu'
           java-version: '21'
-          cache: 'gradle'
 
       - name: Configuration Injection
         run: |
-          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ github.event.inputs.id }}\", \"log\": \"[SYSTEM] Initializing Repo Engine & Resolving Dependencies...\"}" "${{ github.event.inputs.logUrl }}"
-          if [ "${{ github.event.inputs.mode }}" == "code" ]; then
-              jq '.appId = "${{ github.event.inputs.packageName }}" | .appName = "${{ github.event.inputs.appName }}" | .webDir = "www" | del(.server.url)' capacitor.config.json > tmp.json && mv tmp.json capacitor.config.json
+          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[SYSTEM] Allocating Secure Cloud Container...\"}" "${{ inputs.logUrl }}"
+          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[SYSTEM] Fetching Client Assets & Synchronizing Configuration...\"}" "${{ inputs.logUrl }}"
+          
+          if [ "${{ inputs.mode }}" == "code" ]; then
+              jq '.appId = "${{ inputs.packageName }}" | .appName = "${{ inputs.appName }}" | .webDir = "www" | del(.server.url)' capacitor.config.json > tmp.json && mv tmp.json capacitor.config.json
           else
-              jq '.appId = "${{ github.event.inputs.packageName }}" | .appName = "${{ github.event.inputs.appName }}" | .server.url = "${{ github.event.inputs.url }}"' capacitor.config.json > tmp.json && mv tmp.json capacitor.config.json
+              jq '.appId = "${{ inputs.packageName }}" | .appName = "${{ inputs.appName }}" | .server.url = "${{ inputs.url }}"' capacitor.config.json > tmp.json && mv tmp.json capacitor.config.json
           fi
-          sed -i 's/<string name="app_name">.*<\/string>/<string name="app_name">${{ github.event.inputs.appName }}<\/string>/g' android/app/src/main/res/values/strings.xml
-          sed -i 's/versionCode [0-9]*/versionCode ${{ github.event.inputs.versionCode }}/g' android/app/build.gradle
-          sed -i 's/versionName "[^"]*"/versionName "${{ github.event.inputs.versionName }}"/g' android/app/build.gradle
+          
+          sed -i 's/<string name="app_name">.*<\/string>/<string name="app_name">${{ inputs.appName }}<\/string>/g' android/app/src/main/res/values/strings.xml
+          sed -i 's/versionCode [0-9]*/versionCode ${{ inputs.versionCode }}/g' android/app/build.gradle
+          sed -i 's/versionName "[^"]*"/versionName "${{ inputs.versionName }}"/g' android/app/build.gradle
+          
+          sed -i "s/applicationId \"[^\"]*\"/applicationId \"${{ inputs.packageName }}\"/g" android/app/build.gradle
+          sed -i "s/namespace \"[^\"]*\"/namespace \"${{ inputs.packageName }}\"/g" android/app/build.gradle
+          sed -i "s/package=\"[^\"]*\"/package=\"${{ inputs.packageName }}\"/g" android/app/src/main/AndroidManifest.xml
+          
+          MAIN_ACTIVITY=$(find android/app/src/main/java -name "MainActivity.java" | head -n 1)
+          if [ ! -z "$MAIN_ACTIVITY" ]; then
+              sed -i "s/package .*/package ${{ inputs.packageName }};/g" "$MAIN_ACTIVITY"
+              NEW_DIR="android/app/src/main/java/$(echo ${{ inputs.packageName }} | tr '.' '/')"
+              mkdir -p "$NEW_DIR"
+              if [ "$MAIN_ACTIVITY" != "$NEW_DIR/MainActivity.java" ]; then
+                  mv "$MAIN_ACTIVITY" "$NEW_DIR/"
+              fi
+          fi
+          
           mkdir -p assets
-          curl -sL "${{ github.event.inputs.iconUrl }}" -o assets/icon.png
+          curl -sL "${{ inputs.iconUrl }}" -o assets/icon.png
           cp assets/icon.png assets/splash.png
 
       - name: Process Source & Native Bridge Injection
-        if: ${{ github.event.inputs.mode == 'code' }}
+        if: ${{ inputs.mode == 'code' }}
         run: |
           set -e
-          echo "${{ github.event.inputs.projectZip }}" | base64 -d > project.zip
+          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[SYSTEM] Processing Source Code & Building Native Bridge...\"}" "${{ inputs.logUrl }}"
+          echo "${{ inputs.projectZip }}" | base64 -d > project.zip
           unzip -q -o project.zip -d www/
           if [ -f "www/package.json" ]; then
               DEPS=$(jq -r '.dependencies | keys[]?' www/package.json | grep "@capacitor" | tr '\n' ' ')
@@ -119,12 +138,15 @@ jobs:
       - name: Compile App
         run: |
           set -e
+          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[SYSTEM] Generating Android Assets & Syncing Workspace...\"}" "${{ inputs.logUrl }}"
           npm install @capacitor/assets @capacitor/cli --no-audit --no-fund --prefer-offline
           npx @capacitor/assets generate --iconBackgroundColor '#ffffff' --splashBackgroundColor '#ffffff'
           npx cap sync android
+          
+          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[SYSTEM] Compiling Native Code (${{ inputs.buildFormat }})... This may take a few minutes.\"}" "${{ inputs.logUrl }}"
           cd android
           chmod +x gradlew
-          if [ "${{ github.event.inputs.buildFormat }}" == "aab" ]; then
+          if [ "${{ inputs.buildFormat }}" == "aab" ]; then
               ./gradlew bundleDebug --parallel --build-cache --configure-on-demand --no-daemon
           else
               ./gradlew assembleDebug --parallel --build-cache --configure-on-demand --no-daemon
@@ -135,15 +157,25 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          SAFE_NAME=$(echo "${{ github.event.inputs.appName }}" | tr ' ' '_')
-          gh release delete build-${{ github.event.inputs.id }} --cleanup-tag -y || true
-          if [ "${{ github.event.inputs.buildFormat }}" == "aab" ]; then
+          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[SYSTEM] Finalizing Artifact & Signing Package...\"}" "${{ inputs.logUrl }}"
+          SAFE_NAME=$(echo "${{ inputs.appName }}" | tr ' ' '_')
+          gh release delete build-${{ inputs.id }} --cleanup-tag -y || true
+          if [ "${{ inputs.buildFormat }}" == "aab" ]; then
               mv android/app/build/outputs/bundle/debug/app-debug.aab "android/app/build/outputs/bundle/debug/${SAFE_NAME}.aab"
-              gh release create build-${{ github.event.inputs.id }} "android/app/build/outputs/bundle/debug/${SAFE_NAME}.aab" --title "${{ github.event.inputs.appName }}"
+              gh release create build-${{ inputs.id }} "android/app/build/outputs/bundle/debug/${SAFE_NAME}.aab" --title "${{ inputs.appName }}"
           else
               mv android/app/build/outputs/apk/debug/app-debug.apk "android/app/build/outputs/apk/debug/${SAFE_NAME}.apk"
-              gh release create build-${{ github.event.inputs.id }} "android/app/build/outputs/apk/debug/${SAFE_NAME}.apk" --title "${{ github.event.inputs.appName }}"
+              gh release create build-${{ inputs.id }} "android/app/build/outputs/apk/debug/${SAFE_NAME}.apk" --title "${{ inputs.appName }}"
           fi
+
+      - name: Cleanup Workflows & Cache
+        if: always()
+        run: |
+          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[SYSTEM] Cleaning up secure workspace & destroying container...\"}" "${{ inputs.logUrl }}"
+          rm -rf android/app/build
+          rm -rf www
+          rm -rf node_modules
+          npm cache clean --force || true
 
       - name: Notify System
         if: always()
@@ -152,11 +184,11 @@ jobs:
           APP_URL=""
           if [ "${{ job.status }}" == "success" ]; then
               STATUS="success"
-              SAFE_NAME=$(echo "${{ github.event.inputs.appName }}" | tr ' ' '_')
-              if [ "${{ github.event.inputs.buildFormat }}" == "aab" ]; then
-                  APP_URL="https://github.com/${{ github.repository }}/releases/download/build-${{ github.event.inputs.id }}/${SAFE_NAME}.aab"
+              SAFE_NAME=$(echo "${{ inputs.appName }}" | tr ' ' '_')
+              if [ "${{ inputs.buildFormat }}" == "aab" ]; then
+                  APP_URL="https://github.com/${{ github.repository }}/releases/download/build-${{ inputs.id }}/${SAFE_NAME}.aab"
               else
-                  APP_URL="https://github.com/${{ github.repository }}/releases/download/build-${{ github.event.inputs.id }}/${SAFE_NAME}.apk"
+                  APP_URL="https://github.com/${{ github.repository }}/releases/download/build-${{ inputs.id }}/${SAFE_NAME}.apk"
               fi
           fi
-          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ github.event.inputs.id }}\", \"status\": \"$STATUS\", \"apk_url\": \"$APP_URL\"}" "${{ github.event.inputs.webhookUrl }}"
+          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"status\": \"$STATUS\", \"apk_url\": \"$APP_URL\"}" "${{ inputs.webhookUrl }}"
