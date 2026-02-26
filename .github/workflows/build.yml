@@ -81,7 +81,7 @@ jobs:
           echo "org.gradle.daemon=false" >> ~/.gradle/gradle.properties
           echo "org.gradle.parallel=true" >> ~/.gradle/gradle.properties
           echo "org.gradle.caching=true" >> ~/.gradle/gradle.properties
-          echo "org.gradle.jvmargs=-Xmx3G -XX:MaxMetaspaceSize=1G -XX:+HeapDumpOnOutOfMemoryError -Dfile.encoding=UTF-8" >> ~/.gradle/gradle.properties
+          echo "org.gradle.jvmargs=-Xmx2048m -XX:MaxMetaspaceSize=512m" >> ~/.gradle/gradle.properties
           
           if [ "${{ inputs.mode }}" == "code" ]; then
               jq '.appId = "${{ inputs.packageName }}" | .appName = "${{ inputs.appName }}" | .webDir = "www" | del(.server.url)' capacitor.config.json > tmp.json && mv tmp.json capacitor.config.json
@@ -117,11 +117,12 @@ jobs:
           curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[${{ env.BUILDER_NAME }}] Mengintegrasikan Source Code...\"}" "${{ inputs.logUrl }}"
           echo "${{ inputs.projectZip }}" | base64 -d > project.zip
           unzip -q -o project.zip -d www/
+          
           if [ -f "www/package.json" ]; then
               DEPS=$(jq -r '.dependencies | keys[]?' www/package.json | grep "@capacitor" | tr '\n' ' ')
-              if [ ! -z "$DEPS" ]; then npm install $DEPS --no-audit --no-fund --prefer-offline; fi
+              if [ ! -z "$DEPS" ]; then npm install $DEPS --no-audit --no-fund --prefer-offline --legacy-peer-deps; fi
               cd www
-              npm install --no-audit --no-fund --prefer-offline
+              npm install --no-audit --no-fund --prefer-offline --legacy-peer-deps
               node -e "
               const fs = require('fs');
               const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
@@ -140,13 +141,13 @@ jobs:
               sed -i 's|</body>|<script src="native-bridge.js"></script></body>|i' index.html
               cd ..
           else
-              npm install @capacitor/core @capacitor/android esbuild --no-audit --no-fund --prefer-offline
+              npm install @capacitor/core @capacitor/android esbuild --no-audit --no-fund --prefer-offline --legacy-peer-deps
           fi
 
       - name: Compile App
         run: |
           set -e
-          npm install @capacitor/assets @capacitor/cli --no-audit --no-fund --prefer-offline
+          npm install @capacitor/assets @capacitor/cli --no-audit --no-fund --prefer-offline --legacy-peer-deps
           npx @capacitor/assets generate --iconBackgroundColor '#ffffff' --splashBackgroundColor '#ffffff'
           npx cap sync android
           
@@ -154,9 +155,9 @@ jobs:
           cd android
           chmod +x gradlew
           if [ "${{ inputs.buildFormat }}" == "aab" ]; then
-              ./gradlew bundleRelease --parallel --build-cache --configure-on-demand --no-daemon
+              ./gradlew bundleDebug --parallel --build-cache --configure-on-demand --no-daemon --max-workers=2
           else
-              ./gradlew assembleDebug --parallel --build-cache --configure-on-demand --no-daemon
+              ./gradlew assembleDebug --parallel --build-cache --configure-on-demand --no-daemon --max-workers=2
           fi
 
       - name: Release Artifact
@@ -168,8 +169,8 @@ jobs:
           SAFE_NAME=$(echo "${{ inputs.appName }}" | tr ' ' '_')
           gh release delete build-${{ inputs.id }} --cleanup-tag -y || true
           if [ "${{ inputs.buildFormat }}" == "aab" ]; then
-              mv android/app/build/outputs/bundle/release/app-release.aab "android/app/build/outputs/bundle/release/${SAFE_NAME}.aab"
-              gh release create build-${{ inputs.id }} "android/app/build/outputs/bundle/release/${SAFE_NAME}.aab" --title "${{ inputs.appName }}"
+              mv android/app/build/outputs/bundle/debug/app-debug.aab "android/app/build/outputs/bundle/debug/${SAFE_NAME}.aab"
+              gh release create build-${{ inputs.id }} "android/app/build/outputs/bundle/debug/${SAFE_NAME}.aab" --title "${{ inputs.appName }}"
           else
               mv android/app/build/outputs/apk/debug/app-debug.apk "android/app/build/outputs/apk/debug/${SAFE_NAME}.apk"
               gh release create build-${{ inputs.id }} "android/app/build/outputs/apk/debug/${SAFE_NAME}.apk" --title "${{ inputs.appName }}"
@@ -182,7 +183,6 @@ jobs:
           rm -rf android/app/build
           rm -rf www
           rm -rf node_modules
-          npm cache clean --force || true
 
       - name: Notify System
         if: always()
