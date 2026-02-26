@@ -76,9 +76,9 @@ jobs:
           java-version: '21'
           cache: 'gradle'
 
-      - name: Configuration Injection & Gradle Tuning
+      - name: Configuration Injection & Native Branding
         run: |
-          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[${{ env.BUILDER_NAME }}] Menyiapkan Secure Cloud Container...\"}" "${{ inputs.logUrl }}"
+          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[${{ env.BUILDER_NAME }}] Menyiapkan Konfigurasi & Identitas Aplikasi...\"}" "${{ inputs.logUrl }}"
           
           mkdir -p ~/.gradle
           echo "org.gradle.daemon=false" >> ~/.gradle/gradle.properties
@@ -92,11 +92,12 @@ jobs:
               jq '.appId = "${{ inputs.packageName }}" | .appName = "${{ inputs.appName }}" | .webDir = "www" | .server = {"url": "${{ inputs.url }}", "cleartext": true}' capacitor.config.json > tmp.json && mv tmp.json capacitor.config.json
           fi
           
-          MAIN_ACTIVITY=$(find android/app/src/main/java -name "MainActivity.java" | head -n 1)
+          # 1. SAPU BERSIH PACKAGE NAME LAMA DI SELURUH FILE PROJECT
+          MAIN_ACTIVITY=$(find android/app/src/main/java -type f -name "MainActivity.java" | head -n 1)
           if [ ! -z "$MAIN_ACTIVITY" ]; then
               OLD_PACKAGE=$(grep -o 'package .*;' "$MAIN_ACTIVITY" | sed 's/package //; s/;//' | tr -d '\r' | tr -d ' ')
               if [ ! -z "$OLD_PACKAGE" ]; then
-                  find android/app -type f \( -name "*.xml" -o -name "*.gradle" -o -name "*.java" \) -exec sed -i "s/$OLD_PACKAGE/${{ inputs.packageName }}/g" {} +
+                  find android/app -type f \( -name "*.xml" -o -name "*.gradle" -o -name "*.java" -o -name "*.kt" -o -name "*.json" \) -exec sed -i "s/$OLD_PACKAGE/${{ inputs.packageName }}/g" {} +
               fi
               NEW_DIR="android/app/src/main/java/$(echo ${{ inputs.packageName }} | tr '.' '/')"
               mkdir -p "$NEW_DIR"
@@ -105,10 +106,20 @@ jobs:
               fi
           fi
           
-          sed -i 's/<string name="app_name">.*<\/string>/<string name="app_name">${{ inputs.appName }}<\/string>/g' android/app/src/main/res/values/strings.xml
+          # 2. SAPU BERSIH NAMA APLIKASI (App Info & Home Screen Launcher)
+          sed -i -E 's/<string name="app_name">[^<]*<\/string>/<string name="app_name">${{ inputs.appName }}<\/string>/g' android/app/src/main/res/values/strings.xml
+          sed -i -E 's/<string name="title_activity_main">[^<]*<\/string>/<string name="title_activity_main">${{ inputs.appName }}<\/string>/g' android/app/src/main/res/values/strings.xml
+          sed -i -E 's/<string name="package_name">[^<]*<\/string>/<string name="package_name">${{ inputs.packageName }}<\/string>/g' android/app/src/main/res/values/strings.xml
+          sed -i -E 's/<string name="custom_url_scheme">[^<]*<\/string>/<string name="custom_url_scheme">${{ inputs.packageName }}<\/string>/g' android/app/src/main/res/values/strings.xml
+          
+          # Memaksa AndroidManifest membaca dari referensi string yang baru
+          sed -i -E 's/android:label="[^"]*"/android:label="@string\/app_name"/g' android/app/src/main/AndroidManifest.xml
+          
+          # 3. KONFIGURASI VERSI
           sed -i -E 's/versionCode [0-9]+/versionCode ${{ inputs.versionCode }}/g' android/app/build.gradle
           sed -i -E 's/versionName "[^"]*"/versionName "${{ inputs.versionName }}"/g' android/app/build.gradle
           
+          # 4. UNDUH ICON & SPLASH
           mkdir -p assets
           curl -sL "${{ inputs.iconUrl }}" -o assets/icon.png
           cp assets/icon.png assets/splash.png
@@ -156,7 +167,8 @@ jobs:
         run: |
           set -e
           npm install @capacitor/assets @capacitor/cli --no-audit --no-fund --prefer-offline --legacy-peer-deps
-          npx @capacitor/assets generate --iconBackgroundColor '#ffffff' --splashBackgroundColor '#ffffff'
+          # Parameter paksaan agar Asset (Icon) benar-benar ter-overwrite
+          npx @capacitor/assets generate --assetPath assets --android --iconBackgroundColor '#ffffff' --splashBackgroundColor '#ffffff'
           npx cap sync android
           
           curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[${{ env.BUILDER_NAME }}] Menjalankan Turbo Compiler...\"}" "${{ inputs.logUrl }}"
