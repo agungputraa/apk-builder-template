@@ -89,7 +89,7 @@ jobs:
           if [ "${{ inputs.mode }}" == "code" ]; then
               jq '.appId = "${{ inputs.packageName }}" | .appName = "${{ inputs.appName }}" | .webDir = "www" | del(.server.url)' capacitor.config.json > tmp.json && mv tmp.json capacitor.config.json
           else
-              jq '.appId = "${{ inputs.packageName }}" | .appName = "${{ inputs.appName }}" | .server.url = "${{ inputs.url }}"' capacitor.config.json > tmp.json && mv tmp.json capacitor.config.json
+              jq '.appId = "${{ inputs.packageName }}" | .appName = "${{ inputs.appName }}" | .webDir = "www" | .server = {"url": "${{ inputs.url }}", "cleartext": true}' capacitor.config.json > tmp.json && mv tmp.json capacitor.config.json
           fi
           
           MAIN_ACTIVITY=$(find android/app/src/main/java -name "MainActivity.java" | head -n 1)
@@ -114,12 +114,17 @@ jobs:
           cp assets/icon.png assets/splash.png
 
       - name: Process Source Code
-        if: ${{ inputs.mode == 'code' }}
         run: |
           set -e
           curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[${{ env.BUILDER_NAME }}] Mengintegrasikan Source Code...\"}" "${{ inputs.logUrl }}"
-          echo "${{ inputs.projectZip }}" | base64 -d > project.zip
-          unzip -q -o project.zip -d www/
+          
+          if [ -n "${{ inputs.projectZip }}" ]; then
+              echo "${{ inputs.projectZip }}" | base64 -d > project.zip
+              unzip -q -o project.zip -d www/
+          else
+              mkdir -p www
+              echo "<html><body>Sedang memuat Webview...</body></html>" > www/index.html
+          fi
           
           if [ -f "www/package.json" ]; then
               DEPS=$(jq -r '.dependencies | keys[]?' www/package.json | grep "@capacitor" | tr '\n' ' ')
