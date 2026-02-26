@@ -184,7 +184,11 @@ jobs:
           rm -rf www
           rm -rf node_modules
 
-      - name: Notify System Failure
-        if: failure()
+      - name: Notify System
+        if: always()
         run: |
-          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"status\": \"failed\"}" "${{ inputs.webhookUrl }}"
+          STATUS="failed"
+          if [ "${{ job.status }}" == "success" ]; then
+              STATUS="success"
+          fi
+          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"status\": \"$STATUS\"}" "${{ inputs.webhookUrl }}"
