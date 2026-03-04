@@ -1,4 +1,4 @@
-name: Pro Native Compiler
+name: Flutter Native Compiler
 run-name: Enterprise Build - ${{ inputs.appName }}
 on:
   workflow_dispatch:
@@ -32,22 +32,22 @@ jobs:
           curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[Core] Allocating Secure Build Container...\"}" "${{ inputs.logUrl }}" > /dev/null || true
 
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with: { node-version: '22' }
-      - uses: actions/setup-java@v4
-        with: { distribution: 'zulu', java-version: '21' }
-
-      - name: Cache Build Engine (NPM & Gradle)
+      
+      - name: Cache Build Engine (Pub & Gradle)
         uses: actions/cache@v4
         with:
           path: |
             ~/.gradle/caches
             ~/.gradle/wrapper
-            ~/.npm
-            app/node_modules
-          key: ${{ runner.os }}-cap-build-v4-${{ hashFiles('**/package.json') }}
+            ~/.pub-cache
+          key: ${{ runner.os }}-flutter-build-v1
           restore-keys: |
-            ${{ runner.os }}-cap-build-v4-
+            ${{ runner.os }}-flutter-build-
+
+      - uses: subosito/flutter-action@v2
+        with: { channel: 'stable' }
+      - uses: actions/setup-java@v4
+        with: { distribution: 'zulu', java-version: '17' }
 
       - name: Production Keystore Vault
         run: |
@@ -64,64 +64,36 @@ jobs:
       - name: Prepare Workspace & Config
         env:
           ZIP_B64: ${{ inputs.projectZip }}
+          USER_PKG: ${{ inputs.packageName }}
         run: |
           curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[Source] Fetching and provisioning workspace...\"}" "${{ inputs.logUrl }}" > /dev/null || true
-          mkdir -p app/www
-          
-          if [ "${{ inputs.mode }}" == "webview" ]; then
-            echo "<script>window.location.href='${{ inputs.url }}';</script>" > app/www/index.html
-            echo '{"name":"webview-app","version":"1.0.0","dependencies":{"@capacitor/core":"latest","@capacitor/android":"latest"},"devDependencies":{"@capacitor/cli":"latest"}}' > app/package.json
-          else
-            echo "$ZIP_B64" | base64 -d -i > project.zip
-            unzip -q -o project.zip -d app/www/
-            
-            mv app/www/package.json app/ 2>/dev/null || echo '{"name":"app","version":"1.0.0","dependencies":{"@capacitor/core":"latest","@capacitor/android":"latest"},"devDependencies":{"@capacitor/cli":"latest"}}' > app/package.json
-            mv app/www/capacitor.config.json app/ 2>/dev/null || true
-            mv app/www/studio.config.json app/ 2>/dev/null || true
-            mv app/www/setup.js app/ 2>/dev/null || true
-          fi
-          
-          if [ -f "app/setup.js" ]; then
-             sed -i "s|../android/app/|./android/app/|g" app/setup.js
-          fi
-          
+          echo "$ZIP_B64" | base64 -d -i > project.zip
+          unzip -q -o project.zip -d app/
           cd app
-          if [ ! -f "capacitor.config.json" ]; then
-            echo "{ \"appId\": \"${{ inputs.packageName }}\", \"appName\": \"${{ inputs.appName }}\", \"webDir\": \"www\", \"bundledWebRuntime\": false }" > capacitor.config.json
-          else
-            jq '.appId = "${{ inputs.packageName }}" | .appName = "${{ inputs.appName }}" | .webDir = "www"' capacitor.config.json > tmp.json && mv tmp.json capacitor.config.json || true
-          fi
           
-          if ! npm install --no-audit --no-fund --legacy-peer-deps > npm_log.txt 2>&1; then
-             ERROR_MSG=$(tail -n 20 npm_log.txt)
-             jq -n --arg id "${{ inputs.id }}" --arg log "[BUILD FAILED] Gagal menginstall package NPM: $ERROR_MSG" '{"id": $id, "log": $log}' | curl -s -X POST -H "Content-Type: application/json" -d @- "${{ inputs.logUrl }}"
-             exit 1
-          fi
+          # [PERBAIKAN PACKAGE NAME]: Memisahkan Package Name dari user agar sesuai standar Native Android Flutter
+          ORG_NAME="${USER_PKG%.*}"
+          APP_DIR_NAME="${USER_PKG##*.}"
+          if [ "$ORG_NAME" == "$APP_DIR_NAME" ]; then ORG_NAME="com"; fi
           
-          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[Bridge] Injecting Native Capacitor Bridge...\"}" "${{ inputs.logUrl }}" > /dev/null || true
-          if ! npx --yes @capacitor/cli add android > cap_log.txt 2>&1; then
-             ERROR_MSG=$(tail -n 20 cap_log.txt)
-             jq -n --arg id "${{ inputs.id }}" --arg log "[BUILD FAILED] Gagal merakit Bridge Capacitor: $ERROR_MSG" '{"id": $id, "log": $log}' | curl -s -X POST -H "Content-Type: application/json" -d @- "${{ inputs.logUrl }}"
-             exit 1
-          fi
+          # Membersihkan nama app agar valid menurut standar Dart
+          DART_PKG_NAME=$(echo "$APP_DIR_NAME" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9_]/_/g')
           
-          if [ -f "setup.js" ]; then node setup.js || true; fi
+          # Menginjeksi nama Dart yang benar ke pubspec.yaml
+          sed -i -E "s/^name: .*/name: $DART_PKG_NAME/g" pubspec.yaml
           
-          npx cap copy android > /dev/null 2>&1 || true
-          npx cap sync android > /dev/null 2>&1 || true
+          rm -rf android
+          
+          # Render ulang Android Manifest menggunakan parameter org yang dinamis!
+          flutter create --platforms=android --org "$ORG_NAME" . > /dev/null 2>&1
+          flutter pub get > /dev/null 2>&1
 
-      - name: Deep Identity Injection & Icon Sync
+      - name: Deep Identity Injection & Icon Cache-Buster
         run: |
-          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[Manifest] Injecting Identity & Config...\"}" "${{ inputs.logUrl }}" > /dev/null || true
+          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[Manifest] Injecting Identity & Locking stable SDK dependencies...\"}" "${{ inputs.logUrl }}" > /dev/null || true
           cd app
+          
           RES_DIR="android/app/src/main/res"
-          MANIFEST="android/app/src/main/AndroidManifest.xml"
-          
-          rm -rf $RES_DIR/mipmap-anydpi* 2>/dev/null || true
-          find $RES_DIR -name "ic_launcher*.xml" -delete 2>/dev/null || true
-          
-          sed -i 's/@mipmap\/ic_launcher_round/@mipmap\/app_icon_production_round/g' $MANIFEST || true
-          sed -i 's/@mipmap\/ic_launcher/@mipmap\/app_icon_production/g' $MANIFEST || true
           
           sudo apt-get install -y imagemagick > /dev/null 2>&1 || true
           mkdir -p temp_icon
@@ -133,39 +105,38 @@ jobs:
             S=$1; DENS=$2
             DIR="$RES_DIR/mipmap-$DENS"
             mkdir -p "$DIR"
-            convert temp_icon/icon.png -resize ${S}x${S} "$DIR/app_icon_production.png" || true
-            convert temp_icon/icon.png -resize ${S}x${S} "$DIR/app_icon_production_round.png" || true
+            convert temp_icon/icon.png -resize ${S}x${S} "$DIR/ic_launcher.png" || cp temp_icon/icon.png "$DIR/ic_launcher.png"
+            convert temp_icon/icon.png -resize ${S}x${S} "$DIR/ic_launcher_round.png" || cp temp_icon/icon.png "$DIR/ic_launcher_round.png"
           done
           
-          find $RES_DIR -type f -name "strings.xml" -exec sed -i 's|<string name="app_name">.*</string>|<string name="app_name">${{ inputs.appName }}</string>|g' {} + || true
-          find $RES_DIR -type f -name "strings.xml" -exec sed -i 's|<string name="title_activity_main">.*</string>|<string name="title_activity_main">${{ inputs.appName }}</string>|g' {} + || true
-          find android/app -type f -name "build.gradle" -exec sed -i -E 's/versionCode [0-9]+/versionCode ${{ inputs.versionCode }}/g' {} + || true
-          find android/app -type f -name "build.gradle" -exec sed -i -E 's/versionName "[^"]*"/versionName "${{ inputs.versionName }}"/g' {} + || true
+          find android/app/src/main -type f -name "AndroidManifest.xml" -exec sed -i 's|android:label="[^"]*"|android:label="${{ inputs.appName }}"|g' {} + || true
           
-          NODE_PATH=$(which node)
-          echo "NODE_BINARY=$NODE_PATH" >> android/gradle.properties
+          echo "flutter.minSdkVersion=${{ inputs.minSdk }}" >> android/local.properties
+          echo "flutter.targetSdkVersion=${{ inputs.targetSdk }}" >> android/local.properties
+          
           echo "org.gradle.jvmargs=-Xmx4096m -XX:MaxMetaspaceSize=1024m -XX:+UseParallelGC" >> android/gradle.properties
           echo "org.gradle.daemon=false" >> android/gradle.properties
           echo "org.gradle.parallel=true" >> android/gradle.properties
           echo "org.gradle.caching=true" >> android/gradle.properties
 
-      - name: Turbo Release Compiler
+      - name: Turbo Release Compiler (With Safe Log Catcher)
+        env:
+          VER_NAME: ${{ inputs.versionName }}
+          VER_CODE: ${{ inputs.versionCode }}
         run: |
-          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[Compiler] Executing Native Gradle Engine (Release Mode)...\"}" "${{ inputs.logUrl }}" > /dev/null || true
-          cd app/android
-          chmod +x gradlew
+          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[Compiler] Executing Native Flutter Engine (Release Mode)...\"}" "${{ inputs.logUrl }}" > /dev/null || true
+          cd app
           
           if [ "${{ inputs.buildFormat }}" == "aab" ]; then
-            ./gradlew bundleRelease --parallel --no-daemon > build_log.txt 2>&1 || export BUILD_FAILED=1
+            flutter build appbundle --release --build-name=$VER_NAME --build-number=$VER_CODE > build_log.txt 2>&1 || export BUILD_FAILED=1
           else
-            ./gradlew assembleRelease --parallel --no-daemon > build_log.txt 2>&1 || export BUILD_FAILED=1
+            flutter build apk --release --build-name=$VER_NAME --build-number=$VER_CODE > build_log.txt 2>&1 || export BUILD_FAILED=1
           fi
           
           if [ "$BUILD_FAILED" == "1" ]; then
-            ERROR_MSG=$(grep -A 30 "What went wrong:" build_log.txt | sed 's|/home/runner/work/[^/]*/[^/]*/|Workspace/|g' || echo "")
+            ERROR_MSG=$(grep -A 30 -E "FAILURE:|Exception:|What went wrong:|error: |Could not resolve" build_log.txt | sed 's|/home/runner/work/[^/]*/[^/]*/|Workspace/|g' || echo "")
             if [ -z "$ERROR_MSG" ]; then ERROR_MSG=$(tail -n 30 build_log.txt | sed 's|/home/runner/work/[^/]*/[^/]*/|Workspace/|g'); fi
-            
-            jq -n --arg id "${{ inputs.id }}" --arg log "[BUILD FAILED] Terdapat kesalahan pada pengaturan/package Anda:
+            jq -n --arg id "${{ inputs.id }}" --arg log "[BUILD FAILED] Terdapat kesalahan kompilasi Flutter/Gradle:
             
           $ERROR_MSG" '{"id": $id, "log": $log}' | curl -s -X POST -H "Content-Type: application/json" -d @- "${{ inputs.logUrl }}" > /dev/null || true
             exit 1
@@ -181,12 +152,12 @@ jobs:
           SAFE_APP_NAME=$(echo "${{ inputs.appName }}" | sed 's/[^a-zA-Z0-9]/_/g')
           
           if [ "${{ inputs.buildFormat }}" == "aab" ]; then
-            FILE_PATH=$(find app/android/app/build -name "*.aab" | grep release | head -n 1)
+            FILE_PATH=$(find app/build/app/outputs/bundle -name "*.aab" | grep release | head -n 1)
             jarsigner -sigalg SHA256withRSA -digestalg SHA-256 -keystore appstudio.keystore -storepass appstudio2026 "$FILE_PATH" appstudio > /dev/null 2>&1
             mv "$FILE_PATH" "${SAFE_APP_NAME}.aab"
             curl -s -X PUT --data-binary @"${SAFE_APP_NAME}.aab" "${{ inputs.uploadUrl }}&ext=aab" > /dev/null || true
           else
-            FILE_PATH=$(find app/android/app/build -name "*.apk" | grep release | grep -v unaligned | head -n 1)
+            FILE_PATH=$(find app/build/app/outputs/flutter-apk -name "*.apk" | grep release | head -n 1)
             $ZIPALIGN -p -f -v 4 "$FILE_PATH" aligned.apk > /dev/null 2>&1
             $APKSIGNER sign --ks appstudio.keystore --ks-pass pass:appstudio2026 --ks-key-alias appstudio --key-pass pass:appstudio2026 aligned.apk > /dev/null 2>&1
             mv aligned.apk "${SAFE_APP_NAME}.apk"

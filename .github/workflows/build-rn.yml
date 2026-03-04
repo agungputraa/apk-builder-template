@@ -1,4 +1,4 @@
-name: Pro Native Compiler
+name: React Native Compiler
 run-name: Enterprise Build - ${{ inputs.appName }}
 on:
   workflow_dispatch:
@@ -22,20 +22,23 @@ on:
 permissions:
   contents: write
 
+env:
+  NODE_OPTIONS: "--max-old-space-size=4096"
+
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - name: System Initialization
         run: |
           curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[Core] Allocating Secure Build Container...\"}" "${{ inputs.logUrl }}" > /dev/null || true
-
+      
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
-        with: { node-version: '22' }
+        with: { node-version: '20' }
       - uses: actions/setup-java@v4
-        with: { distribution: 'zulu', java-version: '21' }
+        with: { distribution: 'zulu', java-version: '17' }
 
       - name: Cache Build Engine (NPM & Gradle)
         uses: actions/cache@v4
@@ -45,9 +48,9 @@ jobs:
             ~/.gradle/wrapper
             ~/.npm
             app/node_modules
-          key: ${{ runner.os }}-cap-build-v4-${{ hashFiles('**/package.json') }}
+          key: ${{ runner.os }}-rn-build-v3-${{ hashFiles('**/package.json') }}
           restore-keys: |
-            ${{ runner.os }}-cap-build-v4-
+            ${{ runner.os }}-rn-build-v3-
 
       - name: Production Keystore Vault
         run: |
@@ -61,86 +64,59 @@ jobs:
             git push origin HEAD:main > /dev/null 2>&1 || true
           fi
 
-      - name: Prepare Workspace & Config
+      - name: Prepare Workspace (Pure User Code)
         env:
           ZIP_B64: ${{ inputs.projectZip }}
         run: |
-          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[Source] Fetching and provisioning workspace...\"}" "${{ inputs.logUrl }}" > /dev/null || true
-          mkdir -p app/www
-          
-          if [ "${{ inputs.mode }}" == "webview" ]; then
-            echo "<script>window.location.href='${{ inputs.url }}';</script>" > app/www/index.html
-            echo '{"name":"webview-app","version":"1.0.0","dependencies":{"@capacitor/core":"latest","@capacitor/android":"latest"},"devDependencies":{"@capacitor/cli":"latest"}}' > app/package.json
-          else
-            echo "$ZIP_B64" | base64 -d -i > project.zip
-            unzip -q -o project.zip -d app/www/
-            
-            mv app/www/package.json app/ 2>/dev/null || echo '{"name":"app","version":"1.0.0","dependencies":{"@capacitor/core":"latest","@capacitor/android":"latest"},"devDependencies":{"@capacitor/cli":"latest"}}' > app/package.json
-            mv app/www/capacitor.config.json app/ 2>/dev/null || true
-            mv app/www/studio.config.json app/ 2>/dev/null || true
-            mv app/www/setup.js app/ 2>/dev/null || true
-          fi
-          
-          if [ -f "app/setup.js" ]; then
-             sed -i "s|../android/app/|./android/app/|g" app/setup.js
-          fi
-          
+          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[Source] Provisioning Workspace & Expo Config...\"}" "${{ inputs.logUrl }}" > /dev/null || true
+          echo "$ZIP_B64" | base64 -d -i > project.zip
+          unzip -q -o project.zip -d app/
           cd app
-          if [ ! -f "capacitor.config.json" ]; then
-            echo "{ \"appId\": \"${{ inputs.packageName }}\", \"appName\": \"${{ inputs.appName }}\", \"webDir\": \"www\", \"bundledWebRuntime\": false }" > capacitor.config.json
-          else
-            jq '.appId = "${{ inputs.packageName }}" | .appName = "${{ inputs.appName }}" | .webDir = "www"' capacitor.config.json > tmp.json && mv tmp.json capacitor.config.json || true
-          fi
           
+          mkdir -p assets
+          curl -sL "${{ inputs.iconUrl }}" -o assets/icon.png > /dev/null 2>&1
+          if [ ! -s assets/icon.png ]; then echo "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=" | base64 -d > assets/icon.png; fi
+          
+          # HANYA menyelaraskan Identitas Dasar (Nama & Package) agar sinkron dengan Form UI Anda.
+          if [ ! -f "app.json" ]; then echo "{}" > app.json; fi
+          jq '.expo.name = "${{ inputs.appName }}" | .expo.android.package = "${{ inputs.packageName }}" | .expo.version = "${{ inputs.versionName }}" | .expo.android.versionCode = ("${{ inputs.versionCode }}" | tonumber) | .expo.icon = "./assets/icon.png"' app.json > tmp.json && mv tmp.json app.json || true
+          
+          # Murni membaca package.json milik user
           if ! npm install --no-audit --no-fund --legacy-peer-deps > npm_log.txt 2>&1; then
              ERROR_MSG=$(tail -n 20 npm_log.txt)
-             jq -n --arg id "${{ inputs.id }}" --arg log "[BUILD FAILED] Gagal menginstall package NPM: $ERROR_MSG" '{"id": $id, "log": $log}' | curl -s -X POST -H "Content-Type: application/json" -d @- "${{ inputs.logUrl }}"
+             jq -n --arg id "${{ inputs.id }}" --arg log "[BUILD FAILED] Gagal menginstall package NPM React Native: $ERROR_MSG" '{"id": $id, "log": $log}' | curl -s -X POST -H "Content-Type: application/json" -d @- "${{ inputs.logUrl }}"
              exit 1
           fi
           
-          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[Bridge] Injecting Native Capacitor Bridge...\"}" "${{ inputs.logUrl }}" > /dev/null || true
-          if ! npx --yes @capacitor/cli add android > cap_log.txt 2>&1; then
-             ERROR_MSG=$(tail -n 20 cap_log.txt)
-             jq -n --arg id "${{ inputs.id }}" --arg log "[BUILD FAILED] Gagal merakit Bridge Capacitor: $ERROR_MSG" '{"id": $id, "log": $log}' | curl -s -X POST -H "Content-Type: application/json" -d @- "${{ inputs.logUrl }}"
+          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[Bridge] Translating JavaScript to Native Bindings...\"}" "${{ inputs.logUrl }}" > /dev/null || true
+          
+          if ! npx expo prebuild --platform android --clean > expo_log.txt 2>&1; then
+             ERROR_MSG=$(tail -n 20 expo_log.txt)
+             jq -n --arg id "${{ inputs.id }}" --arg log "[BUILD FAILED] Gagal merakit Bridge Expo: $ERROR_MSG" '{"id": $id, "log": $log}' | curl -s -X POST -H "Content-Type: application/json" -d @- "${{ inputs.logUrl }}"
              exit 1
           fi
-          
-          if [ -f "setup.js" ]; then node setup.js || true; fi
-          
-          npx cap copy android > /dev/null 2>&1 || true
-          npx cap sync android > /dev/null 2>&1 || true
 
-      - name: Deep Identity Injection & Icon Sync
+      - name: Build Preparation & Icon Injection
         run: |
-          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[Manifest] Injecting Identity & Config...\"}" "${{ inputs.logUrl }}" > /dev/null || true
           cd app
           RES_DIR="android/app/src/main/res"
           MANIFEST="android/app/src/main/AndroidManifest.xml"
           
           rm -rf $RES_DIR/mipmap-anydpi* 2>/dev/null || true
-          find $RES_DIR -name "ic_launcher*.xml" -delete 2>/dev/null || true
-          
           sed -i 's/@mipmap\/ic_launcher_round/@mipmap\/app_icon_production_round/g' $MANIFEST || true
           sed -i 's/@mipmap\/ic_launcher/@mipmap\/app_icon_production/g' $MANIFEST || true
           
-          sudo apt-get install -y imagemagick > /dev/null 2>&1 || true
-          mkdir -p temp_icon
-          curl -sL "${{ inputs.iconUrl }}" -o temp_icon/icon.png > /dev/null 2>&1
-          if [ ! -s temp_icon/icon.png ]; then echo "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=" | base64 -d > temp_icon/icon.png; fi
-          
+          sudo apt-get install -y imagemagick > /dev/null 2>&1
           for SIZE in "48 mdpi" "72 hdpi" "96 xhdpi" "144 xxhdpi" "192 xxxhdpi"; do
             set -- $SIZE
             S=$1; DENS=$2
             DIR="$RES_DIR/mipmap-$DENS"
             mkdir -p "$DIR"
-            convert temp_icon/icon.png -resize ${S}x${S} "$DIR/app_icon_production.png" || true
-            convert temp_icon/icon.png -resize ${S}x${S} "$DIR/app_icon_production_round.png" || true
+            convert assets/icon.png -resize ${S}x${S} "$DIR/app_icon_production.png" || true
+            convert assets/icon.png -resize ${S}x${S} "$DIR/app_icon_production_round.png" || true
           done
           
           find $RES_DIR -type f -name "strings.xml" -exec sed -i 's|<string name="app_name">.*</string>|<string name="app_name">${{ inputs.appName }}</string>|g' {} + || true
-          find $RES_DIR -type f -name "strings.xml" -exec sed -i 's|<string name="title_activity_main">.*</string>|<string name="title_activity_main">${{ inputs.appName }}</string>|g' {} + || true
-          find android/app -type f -name "build.gradle" -exec sed -i -E 's/versionCode [0-9]+/versionCode ${{ inputs.versionCode }}/g' {} + || true
-          find android/app -type f -name "build.gradle" -exec sed -i -E 's/versionName "[^"]*"/versionName "${{ inputs.versionName }}"/g' {} + || true
           
           NODE_PATH=$(which node)
           echo "NODE_BINARY=$NODE_PATH" >> android/gradle.properties
@@ -156,17 +132,15 @@ jobs:
           chmod +x gradlew
           
           if [ "${{ inputs.buildFormat }}" == "aab" ]; then
-            ./gradlew bundleRelease --parallel --no-daemon > build_log.txt 2>&1 || export BUILD_FAILED=1
+            CMD="./gradlew bundleRelease --no-daemon"
           else
-            ./gradlew assembleRelease --parallel --no-daemon > build_log.txt 2>&1 || export BUILD_FAILED=1
+            CMD="./gradlew assembleRelease --no-daemon"
           fi
           
-          if [ "$BUILD_FAILED" == "1" ]; then
-            ERROR_MSG=$(grep -A 30 "What went wrong:" build_log.txt | sed 's|/home/runner/work/[^/]*/[^/]*/|Workspace/|g' || echo "")
+          if ! $CMD > build_log.txt 2>&1; then
+            ERROR_MSG=$(grep -E -A 25 "error: |SyntaxError|Module not found|What went wrong:|Exception:" build_log.txt | sed 's|/home/runner/work/[^/]*/[^/]*/|Workspace/|g' || echo "")
             if [ -z "$ERROR_MSG" ]; then ERROR_MSG=$(tail -n 30 build_log.txt | sed 's|/home/runner/work/[^/]*/[^/]*/|Workspace/|g'); fi
-            
-            jq -n --arg id "${{ inputs.id }}" --arg log "[BUILD FAILED] Terdapat kesalahan pada pengaturan/package Anda:
-            
+            jq -n --arg id "${{ inputs.id }}" --arg log "[BUILD FAILED] Terjadi kesalahan Kompilasi/Syntax:
           $ERROR_MSG" '{"id": $id, "log": $log}' | curl -s -X POST -H "Content-Type: application/json" -d @- "${{ inputs.logUrl }}" > /dev/null || true
             exit 1
           fi
