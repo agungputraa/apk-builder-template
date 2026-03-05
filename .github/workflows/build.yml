@@ -49,17 +49,17 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cap-build-v4-
 
-      - name: Cache Production Keystore Vault
-        id: keystore-cache
+      - name: Persistent Keystore Vault Cache
+        id: keystore-vault
         uses: actions/cache@v4
         with:
           path: appstudio.keystore
-          key: static-production-keystore-vault-v1
+          key: enterprise-keystore-vault-static-v1
 
-      - name: Production Keystore Vault Generation
-        if: steps.keystore-cache.outputs.cache-hit != 'true'
+      - name: Generate Static Keystore
+        if: steps.keystore-vault.outputs.cache-hit != 'true'
         run: |
-          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[Security] Generating New Static Cryptography Vault...\\n\"}" "${{ inputs.logUrl }}" > /dev/null || true
+          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[Security] Generating Static Cryptography Vault...\\n\"}" "${{ inputs.logUrl }}" > /dev/null || true
           keytool -genkeypair -v -keystore appstudio.keystore -alias appstudio -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=AppStudio, OU=Enterprise, O=AppStudio, L=Jakarta, ST=DKI, C=ID" -storepass appstudio2026 -keypass appstudio2026 > /dev/null 2>&1
 
       - name: Prepare Workspace & Config
