@@ -49,18 +49,17 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cap-build-v4-
 
+      - name: Cache Production Keystore
+        uses: actions/cache@v4
+        with:
+          path: appstudio.keystore
+          key: static-production-keystore-v1
+
       - name: Production Keystore Vault
         run: |
           curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[Security] Verifying Production Cryptography Vault...\\n\"}" "${{ inputs.logUrl }}" > /dev/null || true
           if [ ! -f "appstudio.keystore" ]; then
             keytool -genkeypair -v -keystore appstudio.keystore -alias appstudio -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=AppStudio, OU=Enterprise, O=AppStudio, L=Jakarta, ST=DKI, C=ID" -storepass appstudio2026 -keypass appstudio2026 > /dev/null 2>&1
-            git config --global user.name "github-actions[bot]"
-            git config --global user.email "github-actions[bot]@users.noreply.github.com"
-            git add -f appstudio.keystore
-            git commit -m "System: Secure Vault Generated" > /dev/null 2>&1 || true
-            BRANCH_NAME="${GITHUB_REF#refs/heads/}"
-            if [ "$BRANCH_NAME" == "$GITHUB_REF" ]; then BRANCH_NAME="main"; fi
-            git push origin HEAD:$BRANCH_NAME > /dev/null 2>&1 || true
           fi
 
       - name: Prepare Workspace & Config
