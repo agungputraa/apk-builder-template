@@ -50,10 +50,11 @@ jobs:
             ${{ runner.os }}-cap-build-v4-
 
       - name: Cache Production Keystore
+        id: keystore-cache
         uses: actions/cache@v4
         with:
           path: appstudio.keystore
-          key: static-production-keystore-v1
+          key: static-keystore-vault
 
       - name: Production Keystore Vault
         run: |
@@ -168,7 +169,11 @@ jobs:
              echo "import com.getcapacitor.BridgeActivity;" >> "$NEW_DIR/MainActivity.java"
              echo "public class MainActivity extends BridgeActivity {" >> "$NEW_DIR/MainActivity.java"
              echo "    private long backPressedTime = 0;" >> "$NEW_DIR/MainActivity.java"
-             
+             echo "    @Override" >> "$NEW_DIR/MainActivity.java"
+             echo "    public void onCreate(Bundle savedInstanceState) {" >> "$NEW_DIR/MainActivity.java"
+             echo "        super.onCreate(savedInstanceState);" >> "$NEW_DIR/MainActivity.java"
+             echo "        hideSystemUI();" >> "$NEW_DIR/MainActivity.java"
+             echo "    }" >> "$NEW_DIR/MainActivity.java"
              echo "    @Override" >> "$NEW_DIR/MainActivity.java"
              echo "    public void onWindowFocusChanged(boolean hasFocus) {" >> "$NEW_DIR/MainActivity.java"
              echo "        super.onWindowFocusChanged(hasFocus);" >> "$NEW_DIR/MainActivity.java"
@@ -176,18 +181,26 @@ jobs:
              echo "            hideSystemUI();" >> "$NEW_DIR/MainActivity.java"
              echo "        }" >> "$NEW_DIR/MainActivity.java"
              echo "    }" >> "$NEW_DIR/MainActivity.java"
-             
              echo "    private void hideSystemUI() {" >> "$NEW_DIR/MainActivity.java"
-             echo "        getWindow().getDecorView().setSystemUiVisibility(" >> "$NEW_DIR/MainActivity.java"
-             echo "            View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY" >> "$NEW_DIR/MainActivity.java"
-             echo "            | View.SYSTEM_UI_FLAG_LAYOUT_STABLE" >> "$NEW_DIR/MainActivity.java"
-             echo "            | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION" >> "$NEW_DIR/MainActivity.java"
-             echo "            | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN" >> "$NEW_DIR/MainActivity.java"
-             echo "            | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION" >> "$NEW_DIR/MainActivity.java"
-             echo "            | View.SYSTEM_UI_FLAG_FULLSCREEN" >> "$NEW_DIR/MainActivity.java"
-             echo "        );" >> "$NEW_DIR/MainActivity.java"
+             echo "        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {" >> "$NEW_DIR/MainActivity.java"
+             echo "            getWindow().setDecorFitsSystemWindows(false);" >> "$NEW_DIR/MainActivity.java"
+             echo "            android.view.WindowInsetsController controller = getWindow().getInsetsController();" >> "$NEW_DIR/MainActivity.java"
+             echo "            if (controller != null) {" >> "$NEW_DIR/MainActivity.java"
+             echo "                controller.hide(android.view.WindowInsets.Type.statusBars() | android.view.WindowInsets.Type.navigationBars());" >> "$NEW_DIR/MainActivity.java"
+             echo "                controller.setSystemBarsBehavior(android.view.WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);" >> "$NEW_DIR/MainActivity.java"
+             echo "            }" >> "$NEW_DIR/MainActivity.java"
+             echo "        } else {" >> "$NEW_DIR/MainActivity.java"
+             echo "            View decorView = getWindow().getDecorView();" >> "$NEW_DIR/MainActivity.java"
+             echo "            decorView.setSystemUiVisibility(" >> "$NEW_DIR/MainActivity.java"
+             echo "                View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY" >> "$NEW_DIR/MainActivity.java"
+             echo "                | View.SYSTEM_UI_FLAG_LAYOUT_STABLE" >> "$NEW_DIR/MainActivity.java"
+             echo "                | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION" >> "$NEW_DIR/MainActivity.java"
+             echo "                | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN" >> "$NEW_DIR/MainActivity.java"
+             echo "                | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION" >> "$NEW_DIR/MainActivity.java"
+             echo "                | View.SYSTEM_UI_FLAG_FULLSCREEN" >> "$NEW_DIR/MainActivity.java"
+             echo "            );" >> "$NEW_DIR/MainActivity.java"
+             echo "        }" >> "$NEW_DIR/MainActivity.java"
              echo "    }" >> "$NEW_DIR/MainActivity.java"
-             
              echo "    @Override" >> "$NEW_DIR/MainActivity.java"
              echo "    public void onResume() {" >> "$NEW_DIR/MainActivity.java"
              echo "        super.onResume();" >> "$NEW_DIR/MainActivity.java"
