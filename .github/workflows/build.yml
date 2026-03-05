@@ -137,6 +137,11 @@ jobs:
           rm -rf $RES_DIR/mipmap-anydpi* 2>/dev/null || true
           find $RES_DIR -name "ic_launcher*.xml" -delete 2>/dev/null || true
           
+          if [ "${{ inputs.mode }}" == "webview" ]; then
+              sed -i 's/<item name="android:windowTranslucentStatus">true<\/item>/<item name="android:windowTranslucentStatus">false<\/item>/g' $RES_DIR/values/styles.xml || true
+              sed -i 's/<item name="android:windowTranslucentNavigation">true<\/item>/<item name="android:windowTranslucentNavigation">false<\/item>/g' $RES_DIR/values/styles.xml || true
+          fi
+          
           sed -i 's/@mipmap\/ic_launcher_round/@mipmap\/app_icon_production_round/g' $MANIFEST || true
           sed -i 's/@mipmap\/ic_launcher/@mipmap\/app_icon_production/g' $MANIFEST || true
           
@@ -175,20 +180,18 @@ jobs:
              echo "import com.getcapacitor.BridgeActivity;" >> "$NEW_DIR/MainActivity.java"
              echo "public class MainActivity extends BridgeActivity {" >> "$NEW_DIR/MainActivity.java"
              echo "    private long backPressedTime = 0;" >> "$NEW_DIR/MainActivity.java"
-             echo "    @Override" >> "$NEW_DIR/MainActivity.java"
-             echo "    public void onCreate(Bundle savedInstanceState) {" >> "$NEW_DIR/MainActivity.java"
-             echo "        super.onCreate(savedInstanceState);" >> "$NEW_DIR/MainActivity.java"
+             
              if [ "${{ inputs.mode }}" == "webview" ]; then
-                 echo "        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {" >> "$NEW_DIR/MainActivity.java"
-                 echo "            getWindow().getAttributes().layoutInDisplayCutoutMode = android.view.WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_NEVER;" >> "$NEW_DIR/MainActivity.java"
+                 echo "    @Override" >> "$NEW_DIR/MainActivity.java"
+                 echo "    public void onStart() {" >> "$NEW_DIR/MainActivity.java"
+                 echo "        super.onStart();" >> "$NEW_DIR/MainActivity.java"
+                 echo "        WebView webView = this.bridge.getWebView();" >> "$NEW_DIR/MainActivity.java"
+                 echo "        if (webView != null) {" >> "$NEW_DIR/MainActivity.java"
+                 echo "            webView.setFitsSystemWindows(true);" >> "$NEW_DIR/MainActivity.java"
                  echo "        }" >> "$NEW_DIR/MainActivity.java"
-                 echo "        View decorView = getWindow().getDecorView();" >> "$NEW_DIR/MainActivity.java"
-                 echo "        decorView.setSystemUiVisibility(View.SYSTEM_UI_FLAG_VISIBLE);" >> "$NEW_DIR/MainActivity.java"
-                 echo "        getWindow().clearFlags(android.view.WindowManager.LayoutParams.FLAG_TRANSLUCENT_STATUS | android.view.WindowManager.LayoutParams.FLAG_TRANSLUCENT_NAVIGATION);" >> "$NEW_DIR/MainActivity.java"
-                 echo "        android.view.ViewGroup contentParent = findViewById(android.R.id.content);" >> "$NEW_DIR/MainActivity.java"
-                 echo "        if (contentParent != null) contentParent.setFitsSystemWindows(true);" >> "$NEW_DIR/MainActivity.java"
+                 echo "    }" >> "$NEW_DIR/MainActivity.java"
              fi
-             echo "    }" >> "$NEW_DIR/MainActivity.java"
+             
              echo "    @Override" >> "$NEW_DIR/MainActivity.java"
              echo "    public void onResume() {" >> "$NEW_DIR/MainActivity.java"
              echo "        super.onResume();" >> "$NEW_DIR/MainActivity.java"
