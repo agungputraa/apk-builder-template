@@ -87,12 +87,22 @@ jobs:
           cd app
           node -e "
           const fs = require('fs');
-          let cfg = { appId: '${{ inputs.packageName }}', appName: '${{ inputs.appName }}', webDir: 'www', bundledWebRuntime: false, server: { allowNavigation: ['*'], cleartext: true } };
+          const urlStr = '${{ inputs.url }}';
+          let allowedNav = ['*'];
+          if (urlStr && urlStr.startsWith('http')) {
+            try {
+              const url = new URL(urlStr);
+              const host = url.hostname;
+              allowedNav = [host, '*.' + host];
+            } catch(e) {}
+          }
+          let cfg = { appId: '${{ inputs.packageName }}', appName: '${{ inputs.appName }}', webDir: 'www', bundledWebRuntime: false, server: { allowNavigation: allowedNav, cleartext: true } };
           if (fs.existsSync('capacitor.config.json')) {
             try {
               let existing = JSON.parse(fs.readFileSync('capacitor.config.json', 'utf8'));
               cfg = Object.assign(existing, cfg);
               cfg.server = Object.assign(existing.server || {}, cfg.server);
+              cfg.server.allowNavigation = allowedNav;
             } catch(e) {}
           }
           fs.writeFileSync('capacitor.config.json', JSON.stringify(cfg, null, 2));
@@ -125,6 +135,10 @@ jobs:
           rm -rf $RES_DIR/mipmap-anydpi* 2>/dev/null || true
           find $RES_DIR -name "ic_launcher*.xml" -delete 2>/dev/null || true
           
+          # Mencegah UI tenggelam ke bawah notch / status bar
+          sed -i 's/<item name="android:windowTranslucentStatus">true<\/item>//g' $RES_DIR/values/styles.xml || true
+          sed -i 's/<item name="android:windowTranslucentNavigation">true<\/item>//g' $RES_DIR/values/styles.xml || true
+          
           sed -i 's/@mipmap\/ic_launcher_round/@mipmap\/app_icon_production_round/g' $MANIFEST || true
           sed -i 's/@mipmap\/ic_launcher/@mipmap\/app_icon_production/g' $MANIFEST || true
           
@@ -155,11 +169,28 @@ jobs:
              fi
              
              echo "package ${{ inputs.packageName }};" > "$NEW_DIR/MainActivity.java"
+             echo "import android.os.Bundle;" >> "$NEW_DIR/MainActivity.java"
              echo "import android.webkit.WebView;" >> "$NEW_DIR/MainActivity.java"
+             echo "import android.webkit.WebSettings;" >> "$NEW_DIR/MainActivity.java"
              echo "import android.widget.Toast;" >> "$NEW_DIR/MainActivity.java"
+             echo "import android.view.View;" >> "$NEW_DIR/MainActivity.java"
              echo "import com.getcapacitor.BridgeActivity;" >> "$NEW_DIR/MainActivity.java"
              echo "public class MainActivity extends BridgeActivity {" >> "$NEW_DIR/MainActivity.java"
              echo "    private long backPressedTime = 0;" >> "$NEW_DIR/MainActivity.java"
+             echo "    @Override" >> "$NEW_DIR/MainActivity.java"
+             echo "    public void onResume() {" >> "$NEW_DIR/MainActivity.java"
+             echo "        super.onResume();" >> "$NEW_DIR/MainActivity.java"
+             echo "        WebView webView = this.bridge.getWebView();" >> "$NEW_DIR/MainActivity.java"
+             echo "        if (webView != null) {" >> "$NEW_DIR/MainActivity.java"
+             echo "            WebSettings settings = webView.getSettings();" >> "$NEW_DIR/MainActivity.java"
+             echo "            settings.setDomStorageEnabled(true);" >> "$NEW_DIR/MainActivity.java"
+             echo "            settings.setJavaScriptEnabled(true);" >> "$NEW_DIR/MainActivity.java"
+             echo "            settings.setMediaPlaybackRequiresUserGesture(false);" >> "$NEW_DIR/MainActivity.java"
+             echo "            settings.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);" >> "$NEW_DIR/MainActivity.java"
+             echo "            settings.setCacheMode(WebSettings.LOAD_DEFAULT);" >> "$NEW_DIR/MainActivity.java"
+             echo "            webView.setOverScrollMode(View.OVER_SCROLL_NEVER);" >> "$NEW_DIR/MainActivity.java"
+             echo "        }" >> "$NEW_DIR/MainActivity.java"
+             echo "    }" >> "$NEW_DIR/MainActivity.java"
              echo "    @Override" >> "$NEW_DIR/MainActivity.java"
              echo "    public void onBackPressed() {" >> "$NEW_DIR/MainActivity.java"
              echo "        WebView webView = this.bridge.getWebView();" >> "$NEW_DIR/MainActivity.java"
