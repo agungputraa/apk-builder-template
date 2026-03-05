@@ -86,12 +86,14 @@ jobs:
           echo "org.gradle.caching=true" >> ~/.gradle/gradle.properties
           echo "org.gradle.jvmargs=-Xmx2048m -XX:MaxMetaspaceSize=512m" >> ~/.gradle/gradle.properties
           
+          # Konfigurasi WebView: "allowNavigation": ["*"] mencegah redirect ke browser eksternal
           if [ "${{ inputs.mode }}" == "code" ]; then
-              jq '.appId = "${{ inputs.packageName }}" | .appName = "${{ inputs.appName }}" | .webDir = "www" | del(.server.url)' capacitor.config.json > tmp.json && mv tmp.json capacitor.config.json
+              jq '.appId = "${{ inputs.packageName }}" | .appName = "${{ inputs.appName }}" | .webDir = "www" | del(.server.url) | .server.allowNavigation = ["*"]' capacitor.config.json > tmp.json && mv tmp.json capacitor.config.json
           else
               jq '.appId = "${{ inputs.packageName }}" | .appName = "${{ inputs.appName }}" | .webDir = "www" | .server = {"url": "${{ inputs.url }}", "cleartext": true, "allowNavigation": ["*"]}' capacitor.config.json > tmp.json && mv tmp.json capacitor.config.json
           fi
           
+          # 1. SAPU BERSIH PACKAGE NAME LAMA DI SELURUH FILE PROJECT
           MAIN_ACTIVITY=$(find android/app/src/main/java -type f -name "MainActivity.java" | head -n 1)
           if [ ! -z "$MAIN_ACTIVITY" ]; then
               OLD_PACKAGE=$(grep -o 'package .*;' "$MAIN_ACTIVITY" | sed 's/package //; s/;//' | tr -d '\r' | tr -d ' ')
@@ -100,49 +102,71 @@ jobs:
               fi
               NEW_DIR="android/app/src/main/java/$(echo ${{ inputs.packageName }} | tr '.' '/')"
               mkdir -p "$NEW_DIR"
-              if [ "$MAIN_ACTIVITY" != "$NEW_DIR/MainActivity.java" ]; then
-                  mv "$MAIN_ACTIVITY" "$NEW_DIR/"
-              fi
               
-              cat << EOF > "$NEW_DIR/MainActivity.java"
+              # Membuat MainActivity.java baru dengan fitur Go Back dan Double Back Press to Exit
+              cat << 'EOF' > "$NEW_DIR/MainActivity.java"
           package ${{ inputs.packageName }};
+
+          import com.getcapacitor.BridgeActivity;
           import android.os.Bundle;
           import android.webkit.WebView;
           import android.widget.Toast;
-          import com.getcapacitor.BridgeActivity;
+          import android.os.Handler;
+          import android.os.Looper;
 
           public class MainActivity extends BridgeActivity {
-              private long backPressedTime = 0;
+              private boolean doubleBackToExitPressedOnce = false;
+
+              @Override
+              public void onResume() {
+                  super.onResume();
+                  this.doubleBackToExitPressedOnce = false;
+              }
 
               @Override
               public void onBackPressed() {
                   WebView webView = this.bridge.getWebView();
                   if (webView != null && webView.canGoBack()) {
+                      // Jika ada history sebelumnya, kembali ke halaman tersebut
                       webView.goBack();
                   } else {
-                      if (backPressedTime + 2000 > System.currentTimeMillis()) {
+                      // Jika sudah di ujung history, minta double back press untuk keluar
+                      if (doubleBackToExitPressedOnce) {
                           super.onBackPressed();
-                          finish();
-                      } else {
-                          Toast.makeText(getBaseContext(), "Tekan sekali lagi untuk keluar", Toast.LENGTH_SHORT).show();
+                          return;
                       }
-                      backPressedTime = System.currentTimeMillis();
+                      this.doubleBackToExitPressedOnce = true;
+                      Toast.makeText(this, "Tekan sekali lagi untuk keluar", Toast.LENGTH_SHORT).show();
+                      new Handler(Looper.getMainLooper()).postDelayed(new Runnable() {
+                          @Override
+                          public void run() {
+                              doubleBackToExitPressedOnce = false;
+                          }
+                      }, 2000); // Waktu 2 detik untuk menekan lagi
                   }
               }
           }
           EOF
+              # Hapus file MainActivity.java yang lama jika direktori berbeda
+              if [ "$MAIN_ACTIVITY" != "$NEW_DIR/MainActivity.java" ]; then
+                  rm -f "$MAIN_ACTIVITY"
+              fi
           fi
           
+          # 2. SAPU BERSIH NAMA APLIKASI (App Info & Home Screen Launcher)
           sed -i -E 's/<string name="app_name">[^<]*<\/string>/<string name="app_name">${{ inputs.appName }}<\/string>/g' android/app/src/main/res/values/strings.xml
           sed -i -E 's/<string name="title_activity_main">[^<]*<\/string>/<string name="title_activity_main">${{ inputs.appName }}<\/string>/g' android/app/src/main/res/values/strings.xml
           sed -i -E 's/<string name="package_name">[^<]*<\/string>/<string name="package_name">${{ inputs.packageName }}<\/string>/g' android/app/src/main/res/values/strings.xml
           sed -i -E 's/<string name="custom_url_scheme">[^<]*<\/string>/<string name="custom_url_scheme">${{ inputs.packageName }}<\/string>/g' android/app/src/main/res/values/strings.xml
           
+          # Memaksa AndroidManifest membaca dari referensi string yang baru
           sed -i -E 's/android:label="[^"]*"/android:label="@string\/app_name"/g' android/app/src/main/AndroidManifest.xml
           
+          # 3. KONFIGURASI VERSI
           sed -i -E 's/versionCode [0-9]+/versionCode ${{ inputs.versionCode }}/g' android/app/build.gradle
           sed -i -E 's/versionName "[^"]*"/versionName "${{ inputs.versionName }}"/g' android/app/build.gradle
           
+          # 4. UNDUH ICON & SPLASH
           mkdir -p assets
           curl -sL "${{ inputs.iconUrl }}" -o assets/icon.png
           cp assets/icon.png assets/splash.png
@@ -165,20 +189,24 @@ jobs:
               if [ ! -z "$DEPS" ]; then npm install $DEPS --no-audit --no-fund --prefer-offline --legacy-peer-deps; fi
               cd www
               npm install --no-audit --no-fund --prefer-offline --legacy-peer-deps
-              node -e "
+              
+              # Metode aman menulis script node dengan Here-Doc
+              cat << 'EOF' > build-bridge.js
               const fs = require('fs');
               const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
               const deps = Object.keys(pkg.dependencies || {});
-              let code = \"import { Capacitor } from '@capacitor/core';\nwindow.Capacitor = window.Capacitor || Capacitor;\nwindow.Capacitor.isNative = true;\nwindow.Capacitor.Plugins = window.Capacitor.Plugins || {};\n\";
+              let code = "import { Capacitor } from '@capacitor/core';\nwindow.Capacitor = window.Capacitor || Capacitor;\nwindow.Capacitor.isNative = true;\nwindow.Capacitor.Plugins = window.Capacitor.Plugins || {};\n";
               let pIdx = 0;
               deps.forEach(dep => {
                   if (dep.startsWith('@capacitor/') && dep !== '@capacitor/core' && dep !== '@capacitor/android') {
-                      code += \"import * as P\" + pIdx + \" from '\" + dep + \"';\nObject.assign(window.Capacitor.Plugins, P\" + pIdx + \");\n\";
+                      code += "import * as P" + pIdx + " from '" + dep + "';\nObject.assign(window.Capacitor.Plugins, P" + pIdx + ");\n";
                       pIdx++;
                   }
               });
               fs.writeFileSync('bridge.js', code);
-              "
+          EOF
+              
+              node build-bridge.js
               npx esbuild bridge.js --bundle --minify --outfile=native-bridge.js --format=iife
               sed -i 's|</body>|<script src="native-bridge.js"></script></body>|i' index.html
               cd ..
@@ -190,6 +218,7 @@ jobs:
         run: |
           set -e
           npm install @capacitor/assets @capacitor/cli --no-audit --no-fund --prefer-offline --legacy-peer-deps
+          # Parameter paksaan agar Asset (Icon) benar-benar ter-overwrite
           npx @capacitor/assets generate --assetPath assets --android --iconBackgroundColor '#ffffff' --splashBackgroundColor '#ffffff'
           npx cap sync android
           
