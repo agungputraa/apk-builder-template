@@ -78,7 +78,7 @@ jobs:
 
       - name: Configuration Injection & Native Branding
         run: |
-          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[${{ env.BUILDER_NAME }}] Menyiapkan Konfigurasi & Identitas Aplikasi...\"}" "${{ inputs.logUrl }}" > /dev/null || true
+          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[${{ env.BUILDER_NAME }}] Menyiapkan Konfigurasi & Identitas Aplikasi...\"}" "${{ inputs.logUrl }}"
           
           mkdir -p ~/.gradle
           echo "org.gradle.daemon=false" >> ~/.gradle/gradle.properties
@@ -86,12 +86,11 @@ jobs:
           echo "org.gradle.caching=true" >> ~/.gradle/gradle.properties
           echo "org.gradle.jvmargs=-Xmx2048m -XX:MaxMetaspaceSize=512m" >> ~/.gradle/gradle.properties
           
-          # [FITUR 1]: Menambahkan allowNavigation = ["*"] ke dalam konfigurasi agar WebView / Aplikasi Vue/React Anda TIDAK membuka link di browser eksternal
-          jq '.appId = "${{ inputs.packageName }}" | .appName = "${{ inputs.appName }}" | .webDir = "www" | .server.allowNavigation = ["*"]' capacitor.config.json > tmp.json && mv tmp.json capacitor.config.json
+          # [PERBAIKAN 1] Tambahkan allowNavigation: ["*"] agar semua URL tetap stay di dalam aplikasi (tidak lari ke Chrome)
           if [ "${{ inputs.mode }}" == "code" ]; then
-              jq 'del(.server.url)' capacitor.config.json > tmp.json && mv tmp.json capacitor.config.json
+              jq '.appId = "${{ inputs.packageName }}" | .appName = "${{ inputs.appName }}" | .webDir = "www" | del(.server.url)' capacitor.config.json > tmp.json && mv tmp.json capacitor.config.json
           else
-              jq '.server.url = "${{ inputs.url }}" | .server.cleartext = true' capacitor.config.json > tmp.json && mv tmp.json capacitor.config.json
+              jq '.appId = "${{ inputs.packageName }}" | .appName = "${{ inputs.appName }}" | .webDir = "www" | .server = {"url": "${{ inputs.url }}", "cleartext": true, "allowNavigation": ["*"]}' capacitor.config.json > tmp.json && mv tmp.json capacitor.config.json
           fi
           
           # 1. SAPU BERSIH PACKAGE NAME LAMA DI SELURUH FILE PROJECT
@@ -99,27 +98,54 @@ jobs:
           if [ ! -z "$MAIN_ACTIVITY" ]; then
               OLD_PACKAGE=$(grep -o 'package .*;' "$MAIN_ACTIVITY" | sed 's/package //; s/;//' | tr -d '\r' | tr -d ' ')
               if [ ! -z "$OLD_PACKAGE" ]; then
-                  find android/app -type f \( -name "*.xml" -o -name "*.gradle" -o -name "*.java" -o -name "*.kt" -o -name "*.json" \) -exec sed -i "s/$OLD_PACKAGE/${{ inputs.packageName }}/g" {} + || true
+                  find android/app -type f \( -name "*.xml" -o -name "*.gradle" -o -name "*.java" -o -name "*.kt" -o -name "*.json" \) -exec sed -i "s/$OLD_PACKAGE/${{ inputs.packageName }}/g" {} +
               fi
               NEW_DIR="android/app/src/main/java/$(echo ${{ inputs.packageName }} | tr '.' '/')"
               mkdir -p "$NEW_DIR"
               if [ "$MAIN_ACTIVITY" != "$NEW_DIR/MainActivity.java" ]; then
                   mv "$MAIN_ACTIVITY" "$NEW_DIR/"
               fi
+              
+              # [PERBAIKAN 2] Timpa MainActivity.java dengan Metode Echo Multiline agar YAML tidak error
+              echo "package ${{ inputs.packageName }};
+              
+              import android.os.Bundle;
+              import android.webkit.WebView;
+              import android.widget.Toast;
+              import com.getcapacitor.BridgeActivity;
+              
+              public class MainActivity extends BridgeActivity {
+                  private long backPressedTime = 0;
+              
+                  @Override
+                  public void onBackPressed() {
+                      WebView webView = this.bridge.getWebView();
+                      if (webView != null && webView.canGoBack()) {
+                          webView.goBack();
+                      } else {
+                          long t = System.currentTimeMillis();
+                          if (t - backPressedTime > 2000) {
+                              backPressedTime = t;
+                              Toast.makeText(this, \"Tekan sekali lagi untuk keluar\", Toast.LENGTH_SHORT).show();
+                          } else {
+                              super.onBackPressed();
+                          }
+                      }
+                  }
+              }" > "$NEW_DIR/MainActivity.java"
           fi
           
           # 2. SAPU BERSIH NAMA APLIKASI (App Info & Home Screen Launcher)
-          sed -i -E 's/<string name="app_name">[^<]*<\/string>/<string name="app_name">${{ inputs.appName }}<\/string>/g' android/app/src/main/res/values/strings.xml || true
-          sed -i -E 's/<string name="title_activity_main">[^<]*<\/string>/<string name="title_activity_main">${{ inputs.appName }}<\/string>/g' android/app/src/main/res/values/strings.xml || true
-          sed -i -E 's/<string name="package_name">[^<]*<\/string>/<string name="package_name">${{ inputs.packageName }}<\/string>/g' android/app/src/main/res/values/strings.xml || true
-          sed -i -E 's/<string name="custom_url_scheme">[^<]*<\/string>/<string name="custom_url_scheme">${{ inputs.packageName }}<\/string>/g' android/app/src/main/res/values/strings.xml || true
+          sed -i -E 's/<string name="app_name">[^<]*<\/string>/<string name="app_name">${{ inputs.appName }}<\/string>/g' android/app/src/main/res/values/strings.xml
+          sed -i -E 's/<string name="title_activity_main">[^<]*<\/string>/<string name="title_activity_main">${{ inputs.appName }}<\/string>/g' android/app/src/main/res/values/strings.xml
+          sed -i -E 's/<string name="package_name">[^<]*<\/string>/<string name="package_name">${{ inputs.packageName }}<\/string>/g' android/app/src/main/res/values/strings.xml
+          sed -i -E 's/<string name="custom_url_scheme">[^<]*<\/string>/<string name="custom_url_scheme">${{ inputs.packageName }}<\/string>/g' android/app/src/main/res/values/strings.xml
           
-          # Memaksa AndroidManifest membaca dari referensi string yang baru
-          sed -i -E 's/android:label="[^"]*"/android:label="@string\/app_name"/g' android/app/src/main/AndroidManifest.xml || true
+          sed -i -E 's/android:label="[^"]*"/android:label="@string\/app_name"/g' android/app/src/main/AndroidManifest.xml
           
           # 3. KONFIGURASI VERSI
-          sed -i -E 's/versionCode [0-9]+/versionCode ${{ inputs.versionCode }}/g' android/app/build.gradle || true
-          sed -i -E 's/versionName "[^"]*"/versionName "${{ inputs.versionName }}"/g' android/app/build.gradle || true
+          sed -i -E 's/versionCode [0-9]+/versionCode ${{ inputs.versionCode }}/g' android/app/build.gradle
+          sed -i -E 's/versionName "[^"]*"/versionName "${{ inputs.versionName }}"/g' android/app/build.gradle
           
           # 4. UNDUH ICON & SPLASH
           mkdir -p assets
@@ -129,7 +155,7 @@ jobs:
       - name: Process Source Code
         run: |
           set -e
-          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[${{ env.BUILDER_NAME }}] Mengintegrasikan Source Code...\"}" "${{ inputs.logUrl }}" > /dev/null || true
+          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[${{ env.BUILDER_NAME }}] Mengintegrasikan Source Code...\"}" "${{ inputs.logUrl }}"
           
           if [ -n "${{ inputs.projectZip }}" ]; then
               echo "${{ inputs.projectZip }}" | base64 -d > project.zip
@@ -140,12 +166,10 @@ jobs:
           fi
           
           if [ -f "www/package.json" ]; then
-              DEPS=$(jq -r '.dependencies | keys[]?' www/package.json | grep "@capacitor" | tr '\n' ' ' || echo "")
-              # [FITUR 2]: Memastikan @capacitor/app ter-install untuk fitur Back & Exit
-              if [ ! -z "$DEPS" ]; then npm install $DEPS @capacitor/app --no-audit --no-fund --prefer-offline --legacy-peer-deps; fi
+              DEPS=$(jq -r '.dependencies | keys[]?' www/package.json | grep "@capacitor" | tr '\n' ' ')
+              if [ ! -z "$DEPS" ]; then npm install $DEPS --no-audit --no-fund --prefer-offline --legacy-peer-deps; fi
               cd www
               npm install --no-audit --no-fund --prefer-offline --legacy-peer-deps
-              
               node -e "
               const fs = require('fs');
               const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
@@ -158,73 +182,23 @@ jobs:
                       pIdx++;
                   }
               });
-              
-              // [FITUR 3]: Injeksi Go Back & Double Press to Exit via JS (Tanpa menyentuh MainActivity)
-              code += \`
-              import { App } from '@capacitor/app';
-              let lastTimeBackPress = 0;
-              App.addListener('backButton', ({ canGoBack }) => {
-                  if (canGoBack) {
-                      window.history.back();
-                  } else {
-                      const currentTime = new Date().getTime();
-                      if (currentTime - lastTimeBackPress < 2000) {
-                          App.exitApp();
-                      } else {
-                          let t = document.createElement('div');
-                          t.innerText = 'Tekan sekali lagi untuk keluar';
-                          t.style.cssText = 'position:fixed;bottom:50px;left:50%;transform:translateX(-50%);background:rgba(0,0,0,0.7);color:white;padding:10px 20px;border-radius:20px;z-index:99999;font-size:13px;font-family:sans-serif;pointer-events:none;transition:opacity 0.3s;';
-                          document.body.appendChild(t);
-                          setTimeout(() => { t.style.opacity = '0'; setTimeout(() => t.remove(), 300); }, 2000);
-                          lastTimeBackPress = currentTime;
-                      }
-                  }
-              });
-              \`;
-              
               fs.writeFileSync('bridge.js', code);
               "
               npx esbuild bridge.js --bundle --minify --outfile=native-bridge.js --format=iife
               sed -i 's|</body>|<script src="native-bridge.js"></script></body>|i' index.html
               cd ..
           else
-              npm install @capacitor/core @capacitor/android @capacitor/app esbuild --no-audit --no-fund --prefer-offline --legacy-peer-deps
-              
-              # Tangani WebView standar (tanpa package.json)
-              cd www
-              node -e "
-              const fs = require('fs');
-              let code = \"import { Capacitor } from '@capacitor/core';\nwindow.Capacitor = window.Capacitor || Capacitor;\nwindow.Capacitor.isNative = true;\nwindow.Capacitor.Plugins = window.Capacitor.Plugins || {};\n\";
-              code += \`
-              import { App } from '@capacitor/app';
-              let lastTimeBackPress = 0;
-              App.addListener('backButton', ({ canGoBack }) => {
-                  if (canGoBack) { window.history.back(); } else {
-                      const currentTime = new Date().getTime();
-                      if (currentTime - lastTimeBackPress < 2000) { App.exitApp(); } else {
-                          let t = document.createElement('div'); t.innerText = 'Tekan sekali lagi untuk keluar'; t.style.cssText = 'position:fixed;bottom:50px;left:50%;transform:translateX(-50%);background:rgba(0,0,0,0.7);color:white;padding:10px 20px;border-radius:20px;z-index:99999;font-size:13px;font-family:sans-serif;pointer-events:none;transition:opacity 0.3s;';
-                          document.body.appendChild(t); setTimeout(() => { t.style.opacity = '0'; setTimeout(() => t.remove(), 300); }, 2000);
-                          lastTimeBackPress = currentTime;
-                      }
-                  }
-              });
-              \`;
-              fs.writeFileSync('bridge.js', code);
-              "
-              npx esbuild bridge.js --bundle --minify --outfile=native-bridge.js --format=iife
-              sed -i 's|</body>|<script src="native-bridge.js"></script></body>|i' index.html
-              cd ..
+              npm install @capacitor/core @capacitor/android esbuild --no-audit --no-fund --prefer-offline --legacy-peer-deps
           fi
 
       - name: Compile App
         run: |
           set -e
           npm install @capacitor/assets @capacitor/cli --no-audit --no-fund --prefer-offline --legacy-peer-deps
-          # Parameter paksaan agar Asset (Icon) benar-benar ter-overwrite
           npx @capacitor/assets generate --assetPath assets --android --iconBackgroundColor '#ffffff' --splashBackgroundColor '#ffffff'
           npx cap sync android
           
-          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[${{ env.BUILDER_NAME }}] Menjalankan Turbo Compiler...\"}" "${{ inputs.logUrl }}" > /dev/null || true
+          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[${{ env.BUILDER_NAME }}] Menjalankan Turbo Compiler...\"}" "${{ inputs.logUrl }}"
           cd android
           chmod +x gradlew
           if [ "${{ inputs.buildFormat }}" == "aab" ]; then
@@ -236,7 +210,7 @@ jobs:
       - name: Upload Artifact to Core Server
         if: success()
         run: |
-          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[${{ env.BUILDER_NAME }}] Mengenkripsi & Mengirim file ke server utama...\"}" "${{ inputs.logUrl }}" > /dev/null || true
+          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[${{ env.BUILDER_NAME }}] Mengenkripsi & Mengirim file ke server utama...\"}" "${{ inputs.logUrl }}"
           if [ "${{ inputs.buildFormat }}" == "aab" ]; then
               FILE_PATH="android/app/build/outputs/bundle/debug/app-debug.aab"
               EXT="aab"
@@ -244,12 +218,12 @@ jobs:
               FILE_PATH="android/app/build/outputs/apk/debug/app-debug.apk"
               EXT="apk"
           fi
-          curl -s -X PUT --data-binary @"$FILE_PATH" "${{ inputs.uploadUrl }}&id=${{ inputs.id }}&ext=$EXT" > /dev/null || true
+          curl -X PUT --data-binary @"$FILE_PATH" "${{ inputs.uploadUrl }}&id=${{ inputs.id }}&ext=$EXT"
 
       - name: Cleanup Workflows & Cache
         if: always()
         run: |
-          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[${{ env.BUILDER_NAME }}] Membersihkan Workspace...\"}" "${{ inputs.logUrl }}" > /dev/null || true
+          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[${{ env.BUILDER_NAME }}] Membersihkan Workspace...\"}" "${{ inputs.logUrl }}"
           rm -rf android/app/build
           rm -rf www
           rm -rf node_modules
@@ -261,4 +235,4 @@ jobs:
           if [ "${{ job.status }}" == "success" ]; then
               STATUS="success"
           fi
-          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"status\": \"$STATUS\"}" "${{ inputs.webhookUrl }}" > /dev/null || true
+          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"status\": \"$STATUS\"}" "${{ inputs.webhookUrl }}"
