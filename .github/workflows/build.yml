@@ -130,6 +130,25 @@ jobs:
           sed -i 's/@mipmap\/ic_launcher_round/@mipmap\/app_icon_production_round/g' $MANIFEST || true
           sed -i 's/@mipmap\/ic_launcher/@mipmap\/app_icon_production/g' $MANIFEST || true
           
+          node -e "
+          const fs = require('fs');
+          const path = '$MANIFEST';
+          if (!fs.existsSync('studio.config.json')) process.exit(0);
+          try {
+            const config = JSON.parse(fs.readFileSync('studio.config.json', 'utf8'));
+            let content = fs.readFileSync(path, 'utf8');
+            if (config.permissions && Array.isArray(config.permissions)) {
+              let perms = config.permissions.map(p => '    <uses-permission android:name=\"' + p + '\" />').join('\n');
+              content = content.replace('</manifest>', perms + '\n</manifest>');
+            }
+            if (config.metaData && typeof config.metaData === 'object') {
+              let meta = Object.entries(config.metaData).map(([k, v]) => '        <meta-data android:name=\"' + k + '\" android:value=\"' + v + '\" />').join('\n');
+              content = content.replace('</application>', meta + '\n    </application>');
+            }
+            fs.writeFileSync(path, content);
+          } catch (e) { console.log(e); }
+          "
+
           sudo apt-get install -y imagemagick > /dev/null 2>&1 || true
           mkdir -p temp_icon
           curl -sL "${{ inputs.iconUrl }}" -o temp_icon/icon.png > /dev/null 2>&1
