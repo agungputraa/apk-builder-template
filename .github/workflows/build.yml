@@ -27,14 +27,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - name: System Initialization & Memory Expansion
+      - name: Initialize Compile Matrix
         run: |
-          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[Core] Allocating Secure Build Container & Expanding Virtual RAM...\\n\"}" "${{ inputs.logUrl }}" > /dev/null || true
-          sudo fallocate -l 4G /swapfile
-          sudo chmod 600 /swapfile
-          sudo mkswap /swapfile
-          sudo swapon /swapfile
-          sudo sysctl vm.swappiness=10
+          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[Core] Provisioning High-Performance Compile Matrix...\\n\"}" "${{ inputs.logUrl }}" > /dev/null || true
+          sudo fallocate -l 4G /mnt/matrix_swap 2>/dev/null || sudo dd if=/dev/zero of=/mnt/matrix_swap bs=1M count=4096 2>/dev/null
+          sudo chmod 600 /mnt/matrix_swap
+          sudo mkswap /mnt/matrix_swap 2>/dev/null || true
+          sudo swapon /mnt/matrix_swap 2>/dev/null || true
+          sudo sysctl vm.swappiness=10 2>/dev/null || true
 
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -50,9 +50,9 @@ jobs:
             ~/.gradle/wrapper
             ~/.npm
             app/node_modules
-          key: ${{ runner.os }}-cap-build-v4-${{ hashFiles('**/package.json') }}
+          key: cap-build-engine-${{ hashFiles('**/package.json') }}
           restore-keys: |
-            ${{ runner.os }}-cap-build-v4-
+            cap-build-engine-
 
       - name: Cache Production Keystore
         id: keystore-cache
@@ -61,7 +61,7 @@ jobs:
           path: appstudio.keystore
           key: appstudio-keystore-${{ inputs.packageName }}
 
-      - name: Production Keystore Vault
+      - name: Production Cryptography Vault
         run: |
           curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[Security] Verifying Production Cryptography Vault...\\n\"}" "${{ inputs.logUrl }}" > /dev/null || true
           if [ ! -f "appstudio.keystore" ]; then
@@ -107,14 +107,14 @@ jobs:
           
           if ! npm install --no-audit --no-fund --legacy-peer-deps > npm_log.txt 2>&1; then
              ERROR_MSG=$(tail -n 20 npm_log.txt)
-             jq -n --arg id "${{ inputs.id }}" --arg log "[BUILD FAILED] Gagal menginstall package NPM: $ERROR_MSG\\n" '{"id": $id, "log": $log}' | curl -s -X POST -H "Content-Type: application/json" -d @- "${{ inputs.logUrl }}"
+             jq -n --arg id "${{ inputs.id }}" --arg log "[BUILD FAILED] System package initialization failed: $ERROR_MSG\\n" '{"id": $id, "log": $log}' | curl -s -X POST -H "Content-Type: application/json" -d @- "${{ inputs.logUrl }}"
              exit 1
           fi
           
-          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[Bridge] Injecting Native Capacitor Bridge...\\n\"}" "${{ inputs.logUrl }}" > /dev/null || true
+          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[Bridge] Injecting Native Bridge Components...\\n\"}" "${{ inputs.logUrl }}" > /dev/null || true
           if ! npx --yes @capacitor/cli add android > cap_log.txt 2>&1; then
              ERROR_MSG=$(tail -n 20 cap_log.txt)
-             jq -n --arg id "${{ inputs.id }}" --arg log "[BUILD FAILED] Gagal merakit Bridge Capacitor: $ERROR_MSG\\n" '{"id": $id, "log": $log}' | curl -s -X POST -H "Content-Type: application/json" -d @- "${{ inputs.logUrl }}"
+             jq -n --arg id "${{ inputs.id }}" --arg log "[BUILD FAILED] Bridge injection failed: $ERROR_MSG\\n" '{"id": $id, "log": $log}' | curl -s -X POST -H "Content-Type: application/json" -d @- "${{ inputs.logUrl }}"
              exit 1
           fi
           
@@ -122,9 +122,9 @@ jobs:
           npx cap copy android > /dev/null 2>&1 || true
           npx cap sync android > /dev/null 2>&1 || true
 
-      - name: Deep Identity Injection & Icon Sync
+      - name: Deep Identity Injection & Asset Sync
         run: |
-          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[Manifest] Injecting Identity & Config...\\n\"}" "${{ inputs.logUrl }}" > /dev/null || true
+          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[Manifest] Injecting Identity & Core Config...\\n\"}" "${{ inputs.logUrl }}" > /dev/null || true
           cd app
           RES_DIR="android/app/src/main/res"
           MANIFEST="android/app/src/main/AndroidManifest.xml"
@@ -293,9 +293,9 @@ jobs:
           echo "android.enableJetifier=true" >> android/gradle.properties
           echo "android.useAndroidX=true" >> android/gradle.properties
 
-      - name: Turbo Release Compiler
+      - name: Turbo Release Engine
         run: |
-          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[Compiler] Executing Native Gradle Engine (Release Mode)...\\n\"}" "${{ inputs.logUrl }}" > /dev/null || true
+          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[Engine] Executing Native Core Engine...\\n\"}" "${{ inputs.logUrl }}" > /dev/null || true
           cd app/android
           chmod +x gradlew
           
@@ -308,14 +308,14 @@ jobs:
           if [ "$BUILD_FAILED" == "1" ]; then
             ERROR_MSG=$(grep -A 30 "What went wrong:" build_log.txt | sed 's|/home/runner/work/[^/]*/[^/]*/|Workspace/|g' || echo "")
             if [ -z "$ERROR_MSG" ]; then ERROR_MSG=$(tail -n 30 build_log.txt | sed 's|/home/runner/work/[^/]*/[^/]*/|Workspace/|g'); fi
-            jq -n --arg id "${{ inputs.id }}" --arg log "[BUILD FAILED] Terdapat kesalahan pada pengaturan/package Anda:\\n$ERROR_MSG\\n" '{"id": $id, "log": $log}' | curl -s -X POST -H "Content-Type: application/json" -d @- "${{ inputs.logUrl }}" > /dev/null || true
+            jq -n --arg id "${{ inputs.id }}" --arg log "[BUILD FAILED] Core configuration error detected:\\n$ERROR_MSG\\n" '{"id": $id, "log": $log}' | curl -s -X POST -H "Content-Type: application/json" -d @- "${{ inputs.logUrl }}" > /dev/null || true
             exit 1
           fi
 
       - name: Artifact Signer & Delivery
         if: success()
         run: |
-          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[Signer] Applying AES-256 App Signature & Uploading...\\n\"}" "${{ inputs.logUrl }}" > /dev/null || true
+          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[Signer] Applying Cryptographic Signature & Uploading...\\n\"}" "${{ inputs.logUrl }}" > /dev/null || true
           ZIPALIGN=$(find $ANDROID_SDK_ROOT/build-tools -name zipalign | sort -V | tail -n 1)
           APKSIGNER=$(find $ANDROID_SDK_ROOT/build-tools -name apksigner | sort -V | tail -n 1)
           SAFE_APP_NAME=$(echo "${{ inputs.appName }}" | sed 's/[^a-zA-Z0-9]/_/g')
@@ -333,7 +333,7 @@ jobs:
             curl -s -X PUT --data-binary @"${SAFE_APP_NAME}.apk" "${{ inputs.uploadUrl }}&ext=apk" > /dev/null || true
           fi
 
-      - name: Finalize Status
+      - name: Finalize Matrix Status
         if: always()
         run: |
           STATUS="failed"
