@@ -105,7 +105,7 @@ jobs:
           fs.writeFileSync('capacitor.config.json', JSON.stringify(cfg, null, 2));
           "
           
-          if ! npm install --no-audit --no-fund --legacy-peer-deps > npm_log.txt 2>&1; then
+          if ! npm install --no-audit --no-fund --legacy-peer-deps --prefer-offline > npm_log.txt 2>&1; then
              ERROR_MSG=$(tail -n 20 npm_log.txt)
              jq -n --arg id "${{ inputs.id }}" --arg log "[BUILD FAILED] System package initialization failed: $ERROR_MSG\\n" '{"id": $id, "log": $log}' | curl -s -X POST -H "Content-Type: application/json" -d @- "${{ inputs.logUrl }}"
              exit 1
@@ -164,9 +164,10 @@ jobs:
             S=$1; DENS=$2
             DIR="$RES_DIR/mipmap-$DENS"
             mkdir -p "$DIR"
-            convert temp_icon/icon.png -resize ${S}x${S} "$DIR/app_icon_production.png" || true
-            convert temp_icon/icon.png -resize ${S}x${S} "$DIR/app_icon_production_round.png" || true
+            convert temp_icon/icon.png -resize ${S}x${S} "$DIR/app_icon_production.png" &
+            convert temp_icon/icon.png -resize ${S}x${S} "$DIR/app_icon_production_round.png" &
           done
+          wait
           
           MAIN_ACTIVITY=$(find android/app/src/main/java -type f -name "MainActivity.java" | head -n 1)
           if [ ! -z "$MAIN_ACTIVITY" ]; then
@@ -290,6 +291,9 @@ jobs:
           echo "org.gradle.daemon=false" >> android/gradle.properties
           echo "org.gradle.parallel=true" >> android/gradle.properties
           echo "org.gradle.caching=true" >> android/gradle.properties
+          echo "org.gradle.configuration-cache=true" >> android/gradle.properties
+          echo "org.gradle.vfs.watch=true" >> android/gradle.properties
+          echo "org.gradle.configureondemand=true" >> android/gradle.properties
           echo "android.enableJetifier=true" >> android/gradle.properties
           echo "android.useAndroidX=true" >> android/gradle.properties
 
@@ -300,9 +304,9 @@ jobs:
           chmod +x gradlew
           
           if [ "${{ inputs.buildFormat }}" == "aab" ]; then
-            ./gradlew bundleRelease --parallel --no-daemon > build_log.txt 2>&1 || export BUILD_FAILED=1
+            ./gradlew bundleRelease --parallel --no-daemon --build-cache --configure-on-demand > build_log.txt 2>&1 || export BUILD_FAILED=1
           else
-            ./gradlew assembleRelease --parallel --no-daemon > build_log.txt 2>&1 || export BUILD_FAILED=1
+            ./gradlew assembleRelease --parallel --no-daemon --build-cache --configure-on-demand > build_log.txt 2>&1 || export BUILD_FAILED=1
           fi
           
           if [ "$BUILD_FAILED" == "1" ]; then
