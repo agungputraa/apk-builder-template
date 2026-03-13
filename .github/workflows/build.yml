@@ -29,7 +29,7 @@ jobs:
     steps:
       - name: Initialize Compile Matrix
         run: |
-          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[Core] Provisioning High-Performance Compile Matrix...\n\"}" "${{ inputs.logUrl }}" > /dev/null || true
+          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[Core] Provisioning High-Performance Compile Matrix...\\n\"}" "${{ inputs.logUrl }}" > /dev/null || true
           sudo fallocate -l 4G /mnt/matrix_swap 2>/dev/null || sudo dd if=/dev/zero of=/mnt/matrix_swap bs=1M count=4096 2>/dev/null
           sudo chmod 600 /mnt/matrix_swap
           sudo mkswap /mnt/matrix_swap 2>/dev/null || true
@@ -63,7 +63,7 @@ jobs:
 
       - name: Production Cryptography Vault
         run: |
-          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[Security] Verifying Production Cryptography Vault...\n\"}" "${{ inputs.logUrl }}" > /dev/null || true
+          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[Security] Verifying Production Cryptography Vault...\\n\"}" "${{ inputs.logUrl }}" > /dev/null || true
           if [ ! -f "appstudio.keystore" ]; then
             keytool -genkeypair -v -keystore appstudio.keystore -alias appstudio -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=AppStudio, OU=Enterprise, O=AppStudio, L=Jakarta, ST=DKI, C=ID" -storepass appstudio2026 -keypass appstudio2026 > /dev/null 2>&1
           fi
@@ -72,11 +72,11 @@ jobs:
         env:
           ZIP_B64: ${{ inputs.projectZip }}
         run: |
-          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[Source] Fetching and provisioning workspace...\n\"}" "${{ inputs.logUrl }}" > /dev/null || true
+          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[Source] Fetching and provisioning workspace...\\n\"}" "${{ inputs.logUrl }}" > /dev/null || true
           mkdir -p app/www
           
           if [ "${{ inputs.mode }}" == "webview" ]; then
-            echo "<!DOCTYPE html><html><head><title>App</title></head><body></body></html>" > app/www/index.html
+            echo "<script>window.location.href='${{ inputs.url }}';</script>" > app/www/index.html
             echo '{"name":"webview-app","version":"1.0.0","dependencies":{"@capacitor/core":"latest","@capacitor/android":"latest"},"devDependencies":{"@capacitor/cli":"latest"}}' > app/package.json
           else
             echo "$ZIP_B64" | base64 -d -i > project.zip
@@ -93,9 +93,6 @@ jobs:
           node -e "
           const fs = require('fs');
           let cfg = { appId: '${{ inputs.packageName }}', appName: '${{ inputs.appName }}', webDir: 'www', bundledWebRuntime: false, server: { allowNavigation: ['*'], cleartext: true } };
-          if ('${{ inputs.mode }}' === 'webview' && '${{ inputs.url }}' !== '') {
-             cfg.server.url = '${{ inputs.url }}';
-          }
           if (fs.existsSync('capacitor.config.json')) {
             try {
               let existing = JSON.parse(fs.readFileSync('capacitor.config.json', 'utf8'));
@@ -108,23 +105,25 @@ jobs:
           
           if ! npm install --no-audit --no-fund --legacy-peer-deps --prefer-offline > npm_log.txt 2>&1; then
              ERROR_MSG=$(tail -n 20 npm_log.txt)
-             jq -n --arg id "${{ inputs.id }}" --arg log "[BUILD FAILED] System package initialization failed: $ERROR_MSG\n" '{"id": $id, "log": $log}' | curl -s -X POST -H "Content-Type: application/json" -d @- "${{ inputs.logUrl }}"
+             jq -n --arg id "${{ inputs.id }}" --arg log "[BUILD FAILED] System package initialization failed: $ERROR_MSG\\n" '{"id": $id, "log": $log}' | curl -s -X POST -H "Content-Type: application/json" -d @- "${{ inputs.logUrl }}"
              exit 1
           fi
           
-          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[Bridge] Injecting Native Bridge Components...\n\"}" "${{ inputs.logUrl }}" > /dev/null || true
+          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[Bridge] Injecting Native Bridge Components...\\n\"}" "${{ inputs.logUrl }}" > /dev/null || true
           
           if ! npx --yes @capacitor/cli add android > cap_log.txt 2>&1; then
              ERROR_MSG=$(tail -n 20 cap_log.txt)
-             jq -n --arg id "${{ inputs.id }}" --arg log "[BUILD FAILED] Bridge injection failed: $ERROR_MSG\n" '{"id": $id, "log": $log}' | curl -s -X POST -H "Content-Type: application/json" -d @- "${{ inputs.logUrl }}"
+             jq -n --arg id "${{ inputs.id }}" --arg log "[BUILD FAILED] Bridge injection failed: $ERROR_MSG\\n" '{"id": $id, "log": $log}' | curl -s -X POST -H "Content-Type: application/json" -d @- "${{ inputs.logUrl }}"
              exit 1
           fi
           
+          # EKSEKUSI PEMBUATAN BUNDLE NATIVE PLUGINS (RUNTIME)
           if [ -f "setup.js" ]; then node setup.js || true; fi
           
-          if [ -f "www/index.html" ]; then
-             if ! grep -q "capacitor-runtime.js" www/index.html; then
-                sed -i 's|</head>|<script src="capacitor-runtime.js"></script></head>|i' www/index.html
+          # INJEKSI OTOMATIS CAPACITOR RUNTIME KE INDEX.HTML (CRITICAL FIX NATIVE COMMUNICATION)
+          if [ "${{ inputs.mode }}" == "code" ]; then
+             if [ -f "www/index.html" ] && [ -f "www/capacitor-runtime.js" ]; then
+                sed -i 's|</head>|<script src="capacitor-runtime.js"></script>\n</head>|gi' www/index.html || true
              fi
           fi
           
@@ -132,7 +131,7 @@ jobs:
 
       - name: Deep Identity Injection & Asset Sync
         run: |
-          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[Manifest] Injecting Identity & Core Config...\n\"}" "${{ inputs.logUrl }}" > /dev/null || true
+          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[Manifest] Injecting Identity & Core Config...\\n\"}" "${{ inputs.logUrl }}" > /dev/null || true
           cd app
           RES_DIR="android/app/src/main/res"
           MANIFEST="android/app/src/main/AndroidManifest.xml"
@@ -174,14 +173,17 @@ jobs:
           sudo apt-get install -y imagemagick file > /dev/null 2>&1 || true
           mkdir -p temp_icon
           
+          # Unduh dan Validasi Ikon secara ketat
           curl -sL "${{ inputs.iconUrl }}" -o temp_icon/downloaded_icon || true
           
           if file temp_icon/downloaded_icon | grep -qE 'image|bitmap'; then
             mv temp_icon/downloaded_icon temp_icon/icon.png
           else
+            # FALLBACK OTOMATIS: Buat Ikon Default jika Gagal agar Build Tidak Error
             convert -size 512x512 xc:"#10b981" -gravity center -pointsize 120 -fill white -font Arial -annotate 0 "APP" temp_icon/icon.png
           fi
           
+          # Hasilkan ukuran Ikon secara SINKRON (Critical Fix Error Resource Not Found)
           for SIZE in "48 mdpi" "72 hdpi" "96 xhdpi" "144 xxhdpi" "192 xxxhdpi"; do
             set -- $SIZE
             S=$1; DENS=$2
@@ -191,6 +193,7 @@ jobs:
             convert temp_icon/icon.png -resize ${S}x${S} "$DIR/app_icon_production_round.png"
           done
           
+          # Modifikasi MainActivity secara aman tanpa merusak Bridge Capacitor
           MAIN_ACTIVITY=$(find android/app/src/main/java -type f -name "MainActivity.java" | head -n 1)
           if [ ! -z "$MAIN_ACTIVITY" ]; then
              OLD_PACKAGE=$(grep -o 'package .*;' "$MAIN_ACTIVITY" | sed 's/package //; s/;//' | tr -d '\r' | tr -d ' ')
@@ -203,80 +206,88 @@ jobs:
                mv "$MAIN_ACTIVITY" "$NEW_DIR/" || true
              fi
              
-             echo "package ${{ inputs.packageName }};" > "$NEW_DIR/MainActivity.java"
-             echo "import android.os.Bundle;" >> "$NEW_DIR/MainActivity.java"
-             echo "import android.view.View;" >> "$NEW_DIR/MainActivity.java"
-             echo "import android.webkit.WebView;" >> "$NEW_DIR/MainActivity.java"
-             echo "import android.webkit.WebSettings;" >> "$NEW_DIR/MainActivity.java"
-             echo "import android.widget.Toast;" >> "$NEW_DIR/MainActivity.java"
-             echo "import com.getcapacitor.BridgeActivity;" >> "$NEW_DIR/MainActivity.java"
-             echo "public class MainActivity extends BridgeActivity {" >> "$NEW_DIR/MainActivity.java"
-             echo "    private long backPressedTime = 0;" >> "$NEW_DIR/MainActivity.java"
-             echo "    @Override" >> "$NEW_DIR/MainActivity.java"
-             echo "    public void onCreate(Bundle savedInstanceState) {" >> "$NEW_DIR/MainActivity.java"
-             echo "        super.onCreate(savedInstanceState);" >> "$NEW_DIR/MainActivity.java"
-             echo "        hideSystemUI();" >> "$NEW_DIR/MainActivity.java"
-             echo "    }" >> "$NEW_DIR/MainActivity.java"
-             echo "    @Override" >> "$NEW_DIR/MainActivity.java"
-             echo "    public void onWindowFocusChanged(boolean hasFocus) {" >> "$NEW_DIR/MainActivity.java"
-             echo "        super.onWindowFocusChanged(hasFocus);" >> "$NEW_DIR/MainActivity.java"
-             echo "        if (hasFocus) {" >> "$NEW_DIR/MainActivity.java"
-             echo "            hideSystemUI();" >> "$NEW_DIR/MainActivity.java"
-             echo "        }" >> "$NEW_DIR/MainActivity.java"
-             echo "    }" >> "$NEW_DIR/MainActivity.java"
-             echo "    private void hideSystemUI() {" >> "$NEW_DIR/MainActivity.java"
-             echo "        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {" >> "$NEW_DIR/MainActivity.java"
-             echo "            getWindow().setDecorFitsSystemWindows(false);" >> "$NEW_DIR/MainActivity.java"
-             echo "            android.view.WindowInsetsController controller = getWindow().getInsetsController();" >> "$NEW_DIR/MainActivity.java"
-             echo "            if (controller != null) {" >> "$NEW_DIR/MainActivity.java"
-             echo "                controller.hide(android.view.WindowInsets.Type.statusBars() | android.view.WindowInsets.Type.navigationBars());" >> "$NEW_DIR/MainActivity.java"
-             echo "                controller.setSystemBarsBehavior(android.view.WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);" >> "$NEW_DIR/MainActivity.java"
-             echo "            }" >> "$NEW_DIR/MainActivity.java"
-             echo "        } else {" >> "$NEW_DIR/MainActivity.java"
-             echo "            View decorView = getWindow().getDecorView();" >> "$NEW_DIR/MainActivity.java"
-             echo "            decorView.setSystemUiVisibility(" >> "$NEW_DIR/MainActivity.java"
-             echo "                View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY" >> "$NEW_DIR/MainActivity.java"
-             echo "                | View.SYSTEM_UI_FLAG_LAYOUT_STABLE" >> "$NEW_DIR/MainActivity.java"
-             echo "                | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION" >> "$NEW_DIR/MainActivity.java"
-             echo "                | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN" >> "$NEW_DIR/MainActivity.java"
-             echo "                | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION" >> "$NEW_DIR/MainActivity.java"
-             echo "                | View.SYSTEM_UI_FLAG_FULLSCREEN" >> "$NEW_DIR/MainActivity.java"
-             echo "            );" >> "$NEW_DIR/MainActivity.java"
-             echo "        }" >> "$NEW_DIR/MainActivity.java"
-             echo "    }" >> "$NEW_DIR/MainActivity.java"
-             echo "    @Override" >> "$NEW_DIR/MainActivity.java"
-             echo "    public void onResume() {" >> "$NEW_DIR/MainActivity.java"
-             echo "        super.onResume();" >> "$NEW_DIR/MainActivity.java"
-             echo "        hideSystemUI();" >> "$NEW_DIR/MainActivity.java"
-             echo "        WebView webView = this.bridge.getWebView();" >> "$NEW_DIR/MainActivity.java"
-             echo "        if (webView != null) {" >> "$NEW_DIR/MainActivity.java"
-             echo "            WebSettings settings = webView.getSettings();" >> "$NEW_DIR/MainActivity.java"
-             echo "            settings.setDomStorageEnabled(true);" >> "$NEW_DIR/MainActivity.java"
-             echo "            settings.setJavaScriptEnabled(true);" >> "$NEW_DIR/MainActivity.java"
-             echo "            settings.setMediaPlaybackRequiresUserGesture(false);" >> "$NEW_DIR/MainActivity.java"
-             echo "            settings.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);" >> "$NEW_DIR/MainActivity.java"
-             echo "            settings.setCacheMode(WebSettings.LOAD_DEFAULT);" >> "$NEW_DIR/MainActivity.java"
-             echo "            settings.setAllowFileAccessFromFileURLs(true);" >> "$NEW_DIR/MainActivity.java"
-             echo "            settings.setAllowUniversalAccessFromFileURLs(true);" >> "$NEW_DIR/MainActivity.java"
-             echo "            webView.setOverScrollMode(View.OVER_SCROLL_NEVER);" >> "$NEW_DIR/MainActivity.java"
-             echo "        }" >> "$NEW_DIR/MainActivity.java"
-             echo "    }" >> "$NEW_DIR/MainActivity.java"
-             echo "    @Override" >> "$NEW_DIR/MainActivity.java"
-             echo "    public void onBackPressed() {" >> "$NEW_DIR/MainActivity.java"
-             echo "        WebView webView = this.bridge.getWebView();" >> "$NEW_DIR/MainActivity.java"
-             echo "        if (webView != null && webView.canGoBack()) {" >> "$NEW_DIR/MainActivity.java"
-             echo "            webView.goBack();" >> "$NEW_DIR/MainActivity.java"
-             echo "        } else {" >> "$NEW_DIR/MainActivity.java"
-             echo "            long t = System.currentTimeMillis();" >> "$NEW_DIR/MainActivity.java"
-             echo "            if (t - backPressedTime > 2000) {" >> "$NEW_DIR/MainActivity.java"
-             echo "                backPressedTime = t;" >> "$NEW_DIR/MainActivity.java"
-             echo "                Toast.makeText(this, \"Tekan sekali lagi untuk keluar\", Toast.LENGTH_SHORT).show();" >> "$NEW_DIR/MainActivity.java"
-             echo "            } else {" >> "$NEW_DIR/MainActivity.java"
-             echo "                super.onBackPressed();" >> "$NEW_DIR/MainActivity.java"
-             echo "            }" >> "$NEW_DIR/MainActivity.java"
-             echo "        }" >> "$NEW_DIR/MainActivity.java"
-             echo "    }" >> "$NEW_DIR/MainActivity.java"
-             echo "}" >> "$NEW_DIR/MainActivity.java"
+             cat << 'EOF' > "$NEW_DIR/MainActivity.java"
+             package ${{ inputs.packageName }};
+             import android.os.Bundle;
+             import android.view.View;
+             import android.webkit.WebView;
+             import android.webkit.WebSettings;
+             import android.webkit.WebResourceRequest;
+             import android.webkit.WebViewClient;
+             import android.widget.Toast;
+             import android.content.Intent;
+             import android.net.Uri;
+             import com.getcapacitor.BridgeActivity;
+
+             public class MainActivity extends BridgeActivity {
+                 private long backPressedTime = 0;
+                 @Override
+                 public void onCreate(Bundle savedInstanceState) {
+                     super.onCreate(savedInstanceState);
+                     hideSystemUI();
+                 }
+                 @Override
+                 public void onWindowFocusChanged(boolean hasFocus) {
+                     super.onWindowFocusChanged(hasFocus);
+                     if (hasFocus) { hideSystemUI(); }
+                 }
+                 private void hideSystemUI() {
+                     if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+                         getWindow().setDecorFitsSystemWindows(false);
+                         android.view.WindowInsetsController controller = getWindow().getInsetsController();
+                         if (controller != null) {
+                             controller.hide(android.view.WindowInsets.Type.statusBars() | android.view.WindowInsets.Type.navigationBars());
+                             controller.setSystemBarsBehavior(android.view.WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
+                         }
+                     } else {
+                         getWindow().getDecorView().setSystemUiVisibility(
+                             View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+                             | View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                             | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                             | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                             | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                             | View.SYSTEM_UI_FLAG_FULLSCREEN
+                         );
+                     }
+                 }
+                 @Override
+                 public void onStart() {
+                     super.onStart();
+                     WebView webView = this.bridge.getWebView();
+                     if (webView != null) {
+                         WebSettings settings = webView.getSettings();
+                         settings.setDomStorageEnabled(true);
+                         settings.setJavaScriptEnabled(true);
+                         settings.setMediaPlaybackRequiresUserGesture(false);
+                         settings.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
+                         settings.setCacheMode(WebSettings.LOAD_DEFAULT);
+                         settings.setAllowFileAccessFromFileURLs(true);
+                         settings.setAllowUniversalAccessFromFileURLs(true);
+                         webView.setOverScrollMode(View.OVER_SCROLL_NEVER);
+                         /* WEBVIEW_MODE_HOOK */
+                     }
+                 }
+                 @Override
+                 public void onBackPressed() {
+                     WebView webView = this.bridge.getWebView();
+                     if (webView != null && webView.canGoBack()) {
+                         webView.goBack();
+                     } else {
+                         long t = System.currentTimeMillis();
+                         if (t - backPressedTime > 2000) {
+                             backPressedTime = t;
+                             Toast.makeText(this, "Tekan sekali lagi untuk keluar", Toast.LENGTH_SHORT).show();
+                         } else {
+                             super.onBackPressed();
+                         }
+                     }
+                 }
+             }
+             EOF
+             
+             if [ "${{ inputs.mode }}" == "webview" ]; then
+                 sed -i 's|/\* WEBVIEW_MODE_HOOK \*/|webView.setWebViewClient(new WebViewClient() { @Override public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) { String url = request.getUrl().toString(); String host = request.getUrl().getHost(); String targetUrl = "${{ inputs.url }}"; String targetHost = ""; try { targetHost = new java.net.URL(targetUrl).getHost(); } catch (Exception e) {} if (host != null \&\& targetHost != null \&\& host.contains(targetHost)) { return false; } else { Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse(url)); view.getContext().startActivity(intent); return true; } } });|g' "$NEW_DIR/MainActivity.java"
+             fi
           fi
           
           find $RES_DIR -type f -name "strings.xml" -exec sed -i 's|<string name="app_name">.*</string>|<string name="app_name">${{ inputs.appName }}</string>|g' {} + || true
@@ -298,7 +309,7 @@ jobs:
 
       - name: Turbo Release Engine
         run: |
-          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[Engine] Executing Native Core Engine...\n\"}" "${{ inputs.logUrl }}" > /dev/null || true
+          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[Engine] Executing Native Core Engine...\\n\"}" "${{ inputs.logUrl }}" > /dev/null || true
           cd app/android
           chmod +x gradlew
           
@@ -311,14 +322,14 @@ jobs:
           if [ "$BUILD_FAILED" == "1" ]; then
             ERROR_MSG=$(grep -A 30 "What went wrong:" build_log.txt | sed 's|/home/runner/work/[^/]*/[^/]*/|Workspace/|g' || echo "")
             if [ -z "$ERROR_MSG" ]; then ERROR_MSG=$(tail -n 30 build_log.txt | sed 's|/home/runner/work/[^/]*/[^/]*/|Workspace/|g'); fi
-            jq -n --arg id "${{ inputs.id }}" --arg log "[BUILD FAILED] Core configuration error detected:\n$ERROR_MSG\n" '{"id": $id, "log": $log}' | curl -s -X POST -H "Content-Type: application/json" -d @- "${{ inputs.logUrl }}" > /dev/null || true
+            jq -n --arg id "${{ inputs.id }}" --arg log "[BUILD FAILED] Core configuration error detected:\\n$ERROR_MSG\\n" '{"id": $id, "log": $log}' | curl -s -X POST -H "Content-Type: application/json" -d @- "${{ inputs.logUrl }}" > /dev/null || true
             exit 1
           fi
 
       - name: Artifact Signer & Delivery
         if: success()
         run: |
-          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[Signer] Applying Cryptographic Signature & Uploading...\n\"}" "${{ inputs.logUrl }}" > /dev/null || true
+          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[Signer] Applying Cryptographic Signature & Uploading...\\n\"}" "${{ inputs.logUrl }}" > /dev/null || true
           ZIPALIGN=$(find $ANDROID_SDK_ROOT/build-tools -name zipalign | sort -V | tail -n 1)
           APKSIGNER=$(find $ANDROID_SDK_ROOT/build-tools -name apksigner | sort -V | tail -n 1)
           SAFE_APP_NAME=$(echo "${{ inputs.appName }}" | sed 's/[^a-zA-Z0-9]/_/g')
