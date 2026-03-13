@@ -29,7 +29,7 @@ jobs:
     steps:
       - name: Initialize Compile Matrix
         run: |
-          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[Core] Provisioning High-Performance Compile Matrix...\\n\"}" "${{ inputs.logUrl }}" > /dev/null || true
+          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[Core] Provisioning High-Performance Compile Matrix...\n\"}" "${{ inputs.logUrl }}" > /dev/null || true
           sudo fallocate -l 4G /mnt/matrix_swap 2>/dev/null || sudo dd if=/dev/zero of=/mnt/matrix_swap bs=1M count=4096 2>/dev/null
           sudo chmod 600 /mnt/matrix_swap
           sudo mkswap /mnt/matrix_swap 2>/dev/null || true
@@ -63,7 +63,7 @@ jobs:
 
       - name: Production Cryptography Vault
         run: |
-          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[Security] Verifying Production Cryptography Vault...\\n\"}" "${{ inputs.logUrl }}" > /dev/null || true
+          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[Security] Verifying Production Cryptography Vault...\n\"}" "${{ inputs.logUrl }}" > /dev/null || true
           if [ ! -f "appstudio.keystore" ]; then
             keytool -genkeypair -v -keystore appstudio.keystore -alias appstudio -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=AppStudio, OU=Enterprise, O=AppStudio, L=Jakarta, ST=DKI, C=ID" -storepass appstudio2026 -keypass appstudio2026 > /dev/null 2>&1
           fi
@@ -72,11 +72,11 @@ jobs:
         env:
           ZIP_B64: ${{ inputs.projectZip }}
         run: |
-          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[Source] Fetching and provisioning workspace...\\n\"}" "${{ inputs.logUrl }}" > /dev/null || true
+          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[Source] Fetching and provisioning workspace...\n\"}" "${{ inputs.logUrl }}" > /dev/null || true
           mkdir -p app/www
           
           if [ "${{ inputs.mode }}" == "webview" ]; then
-            echo "<script>window.location.href='${{ inputs.url }}';</script>" > app/www/index.html
+            echo "<!DOCTYPE html><html><head><title>App</title></head><body></body></html>" > app/www/index.html
             echo '{"name":"webview-app","version":"1.0.0","dependencies":{"@capacitor/core":"latest","@capacitor/android":"latest"},"devDependencies":{"@capacitor/cli":"latest"}}' > app/package.json
           else
             echo "$ZIP_B64" | base64 -d -i > project.zip
@@ -93,6 +93,9 @@ jobs:
           node -e "
           const fs = require('fs');
           let cfg = { appId: '${{ inputs.packageName }}', appName: '${{ inputs.appName }}', webDir: 'www', bundledWebRuntime: false, server: { allowNavigation: ['*'], cleartext: true } };
+          if ('${{ inputs.mode }}' === 'webview' && '${{ inputs.url }}' !== '') {
+             cfg.server.url = '${{ inputs.url }}';
+          }
           if (fs.existsSync('capacitor.config.json')) {
             try {
               let existing = JSON.parse(fs.readFileSync('capacitor.config.json', 'utf8'));
@@ -105,25 +108,31 @@ jobs:
           
           if ! npm install --no-audit --no-fund --legacy-peer-deps --prefer-offline > npm_log.txt 2>&1; then
              ERROR_MSG=$(tail -n 20 npm_log.txt)
-             jq -n --arg id "${{ inputs.id }}" --arg log "[BUILD FAILED] System package initialization failed: $ERROR_MSG\\n" '{"id": $id, "log": $log}' | curl -s -X POST -H "Content-Type: application/json" -d @- "${{ inputs.logUrl }}"
+             jq -n --arg id "${{ inputs.id }}" --arg log "[BUILD FAILED] System package initialization failed: $ERROR_MSG\n" '{"id": $id, "log": $log}' | curl -s -X POST -H "Content-Type: application/json" -d @- "${{ inputs.logUrl }}"
              exit 1
           fi
           
-          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[Bridge] Injecting Native Bridge Components...\\n\"}" "${{ inputs.logUrl }}" > /dev/null || true
+          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[Bridge] Injecting Native Bridge Components...\n\"}" "${{ inputs.logUrl }}" > /dev/null || true
           
           if ! npx --yes @capacitor/cli add android > cap_log.txt 2>&1; then
              ERROR_MSG=$(tail -n 20 cap_log.txt)
-             jq -n --arg id "${{ inputs.id }}" --arg log "[BUILD FAILED] Bridge injection failed: $ERROR_MSG\\n" '{"id": $id, "log": $log}' | curl -s -X POST -H "Content-Type: application/json" -d @- "${{ inputs.logUrl }}"
+             jq -n --arg id "${{ inputs.id }}" --arg log "[BUILD FAILED] Bridge injection failed: $ERROR_MSG\n" '{"id": $id, "log": $log}' | curl -s -X POST -H "Content-Type: application/json" -d @- "${{ inputs.logUrl }}"
              exit 1
           fi
           
           if [ -f "setup.js" ]; then node setup.js || true; fi
           
+          if [ -f "www/index.html" ]; then
+             if ! grep -q "capacitor-runtime.js" www/index.html; then
+                sed -i 's|</head>|<script src="capacitor-runtime.js"></script></head>|i' www/index.html
+             fi
+          fi
+          
           npx cap sync android > /dev/null 2>&1 || true
 
       - name: Deep Identity Injection & Asset Sync
         run: |
-          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[Manifest] Injecting Identity & Core Config...\\n\"}" "${{ inputs.logUrl }}" > /dev/null || true
+          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[Manifest] Injecting Identity & Core Config...\n\"}" "${{ inputs.logUrl }}" > /dev/null || true
           cd app
           RES_DIR="android/app/src/main/res"
           MANIFEST="android/app/src/main/AndroidManifest.xml"
@@ -165,17 +174,14 @@ jobs:
           sudo apt-get install -y imagemagick file > /dev/null 2>&1 || true
           mkdir -p temp_icon
           
-          # Unduh dan Validasi Icon
           curl -sL "${{ inputs.iconUrl }}" -o temp_icon/downloaded_icon || true
           
           if file temp_icon/downloaded_icon | grep -qE 'image|bitmap'; then
             mv temp_icon/downloaded_icon temp_icon/icon.png
           else
-            # JIKA GAGAL / ICON KOSONG: Buat default Icon (Kotak Emerald tulisan APP)
             convert -size 512x512 xc:"#10b981" -gravity center -pointsize 120 -fill white -font Arial -annotate 0 "APP" temp_icon/icon.png
           fi
           
-          # Hasilkan ukuran Icon secara sinkron (agar tidak gagal seperti sebelumnya)
           for SIZE in "48 mdpi" "72 hdpi" "96 xhdpi" "144 xxhdpi" "192 xxxhdpi"; do
             set -- $SIZE
             S=$1; DENS=$2
@@ -202,11 +208,7 @@ jobs:
              echo "import android.view.View;" >> "$NEW_DIR/MainActivity.java"
              echo "import android.webkit.WebView;" >> "$NEW_DIR/MainActivity.java"
              echo "import android.webkit.WebSettings;" >> "$NEW_DIR/MainActivity.java"
-             echo "import android.webkit.WebResourceRequest;" >> "$NEW_DIR/MainActivity.java"
-             echo "import android.webkit.WebViewClient;" >> "$NEW_DIR/MainActivity.java"
              echo "import android.widget.Toast;" >> "$NEW_DIR/MainActivity.java"
-             echo "import android.content.Intent;" >> "$NEW_DIR/MainActivity.java"
-             echo "import android.net.Uri;" >> "$NEW_DIR/MainActivity.java"
              echo "import com.getcapacitor.BridgeActivity;" >> "$NEW_DIR/MainActivity.java"
              echo "public class MainActivity extends BridgeActivity {" >> "$NEW_DIR/MainActivity.java"
              echo "    private long backPressedTime = 0;" >> "$NEW_DIR/MainActivity.java"
@@ -257,27 +259,6 @@ jobs:
              echo "            settings.setAllowFileAccessFromFileURLs(true);" >> "$NEW_DIR/MainActivity.java"
              echo "            settings.setAllowUniversalAccessFromFileURLs(true);" >> "$NEW_DIR/MainActivity.java"
              echo "            webView.setOverScrollMode(View.OVER_SCROLL_NEVER);" >> "$NEW_DIR/MainActivity.java"
-             
-             if [ "${{ inputs.mode }}" == "webview" ]; then
-                 echo "            webView.setWebViewClient(new WebViewClient() {" >> "$NEW_DIR/MainActivity.java"
-                 echo "                @Override" >> "$NEW_DIR/MainActivity.java"
-                 echo "                public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {" >> "$NEW_DIR/MainActivity.java"
-                 echo "                    String url = request.getUrl().toString();" >> "$NEW_DIR/MainActivity.java"
-                 echo "                    String host = request.getUrl().getHost();" >> "$NEW_DIR/MainActivity.java"
-                 echo "                    String targetUrl = \"${{ inputs.url }}\";" >> "$NEW_DIR/MainActivity.java"
-                 echo "                    String targetHost = \"\";" >> "$NEW_DIR/MainActivity.java"
-                 echo "                    try { targetHost = new java.net.URL(targetUrl).getHost(); } catch (Exception e) {}" >> "$NEW_DIR/MainActivity.java"
-                 echo "                    if (host != null && targetHost != null && host.contains(targetHost)) {" >> "$NEW_DIR/MainActivity.java"
-                 echo "                        return false;" >> "$NEW_DIR/MainActivity.java"
-                 echo "                    } else {" >> "$NEW_DIR/MainActivity.java"
-                 echo "                        Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse(url));" >> "$NEW_DIR/MainActivity.java"
-                 echo "                        view.getContext().startActivity(intent);" >> "$NEW_DIR/MainActivity.java"
-                 echo "                        return true;" >> "$NEW_DIR/MainActivity.java"
-                 echo "                    }" >> "$NEW_DIR/MainActivity.java"
-                 echo "                }" >> "$NEW_DIR/MainActivity.java"
-                 echo "            });" >> "$NEW_DIR/MainActivity.java"
-             fi
-             
              echo "        }" >> "$NEW_DIR/MainActivity.java"
              echo "    }" >> "$NEW_DIR/MainActivity.java"
              echo "    @Override" >> "$NEW_DIR/MainActivity.java"
@@ -317,7 +298,7 @@ jobs:
 
       - name: Turbo Release Engine
         run: |
-          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[Engine] Executing Native Core Engine...\\n\"}" "${{ inputs.logUrl }}" > /dev/null || true
+          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[Engine] Executing Native Core Engine...\n\"}" "${{ inputs.logUrl }}" > /dev/null || true
           cd app/android
           chmod +x gradlew
           
@@ -330,14 +311,14 @@ jobs:
           if [ "$BUILD_FAILED" == "1" ]; then
             ERROR_MSG=$(grep -A 30 "What went wrong:" build_log.txt | sed 's|/home/runner/work/[^/]*/[^/]*/|Workspace/|g' || echo "")
             if [ -z "$ERROR_MSG" ]; then ERROR_MSG=$(tail -n 30 build_log.txt | sed 's|/home/runner/work/[^/]*/[^/]*/|Workspace/|g'); fi
-            jq -n --arg id "${{ inputs.id }}" --arg log "[BUILD FAILED] Core configuration error detected:\\n$ERROR_MSG\\n" '{"id": $id, "log": $log}' | curl -s -X POST -H "Content-Type: application/json" -d @- "${{ inputs.logUrl }}" > /dev/null || true
+            jq -n --arg id "${{ inputs.id }}" --arg log "[BUILD FAILED] Core configuration error detected:\n$ERROR_MSG\n" '{"id": $id, "log": $log}' | curl -s -X POST -H "Content-Type: application/json" -d @- "${{ inputs.logUrl }}" > /dev/null || true
             exit 1
           fi
 
       - name: Artifact Signer & Delivery
         if: success()
         run: |
-          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[Signer] Applying Cryptographic Signature & Uploading...\\n\"}" "${{ inputs.logUrl }}" > /dev/null || true
+          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[Signer] Applying Cryptographic Signature & Uploading...\n\"}" "${{ inputs.logUrl }}" > /dev/null || true
           ZIPALIGN=$(find $ANDROID_SDK_ROOT/build-tools -name zipalign | sort -V | tail -n 1)
           APKSIGNER=$(find $ANDROID_SDK_ROOT/build-tools -name apksigner | sort -V | tail -n 1)
           SAFE_APP_NAME=$(echo "${{ inputs.appName }}" | sed 's/[^a-zA-Z0-9]/_/g')
