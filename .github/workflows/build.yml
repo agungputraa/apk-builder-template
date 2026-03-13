@@ -85,7 +85,7 @@ jobs:
             mv app/www/package.json app/ 2>/dev/null || echo '{"name":"app","version":"1.0.0","dependencies":{"@capacitor/core":"latest","@capacitor/android":"latest"},"devDependencies":{"@capacitor/cli":"latest"}}' > app/package.json
             mv app/www/capacitor.config.json app/ 2>/dev/null || true
             mv app/www/studio.config.json app/ 2>/dev/null || true
-            mv app/www/setup.js app/ 2>/dev/null || true
+            rm -f app/www/setup.js 2>/dev/null || true
           fi
           
           cd app
@@ -111,18 +111,37 @@ jobs:
           
           curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[Bridge] Injecting Native Bridge Components...\\n\"}" "${{ inputs.logUrl }}" > /dev/null || true
           
+          # =========================================================================
+          # CRITICAL FIX: AUTOMATED NATIVE BRIDGE BUNDLER (MENGGANTIKAN SETUP.JS)
+          # =========================================================================
+          node -e "
+          const fs = require('fs');
+          const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+          const deps = Object.keys(pkg.dependencies || {}).filter(d => d.startsWith('@capacitor/') && !['@capacitor/core', '@capacitor/android', '@capacitor/ios', '@capacitor/cli'].includes(d));
+          let imports = 'import { Capacitor } from \"@capacitor/core\";\n';
+          let assigns = 'window.AppCapacitor = Capacitor;\nwindow.AppPlugins = {};\n';
+          deps.forEach((dep, i) => {
+              imports += 'import * as Plugin' + i + ' from \"' + dep + '\";\n';
+              assigns += 'Object.assign(window.AppPlugins, Plugin' + i + ');\n';
+          });
+          fs.writeFileSync('bridge-entry.js', imports + assigns);
+          "
+          npx esbuild bridge-entry.js --bundle --minify --outfile=www/capacitor-runtime.js || true
+          
+          if [ "${{ inputs.mode }}" == "code" ]; then
+             if [ -f "www/index.html" ] && [ -f "www/capacitor-runtime.js" ]; then
+                sed -i 's|</body>|<script src="capacitor-runtime.js"></script>\n</body>|gi' www/index.html || true
+                if ! grep -q "capacitor-runtime.js" www/index.html; then
+                   echo '<script src="capacitor-runtime.js"></script>' >> www/index.html
+                fi
+             fi
+          fi
+          # =========================================================================
+          
           if ! npx --yes @capacitor/cli add android > cap_log.txt 2>&1; then
              ERROR_MSG=$(tail -n 20 cap_log.txt)
              jq -n --arg id "${{ inputs.id }}" --arg log "[BUILD FAILED] Bridge injection failed: $ERROR_MSG\\n" '{"id": $id, "log": $log}' | curl -s -X POST -H "Content-Type: application/json" -d @- "${{ inputs.logUrl }}"
              exit 1
-          fi
-          
-          if [ -f "setup.js" ]; then node setup.js || true; fi
-          
-          if [ "${{ inputs.mode }}" == "code" ]; then
-             if [ -f "www/index.html" ] && [ -f "www/capacitor-runtime.js" ]; then
-                sed -i 's|</head>|<script src="capacitor-runtime.js"></script>\n</head>|gi' www/index.html || true
-             fi
           fi
           
           npx cap sync android > /dev/null 2>&1 || true
@@ -173,6 +192,9 @@ jobs:
           
           curl -sL "${{ inputs.iconUrl }}" -o temp_icon/downloaded_icon || true
           
+          # =========================================================================
+          # CRITICAL FIX: SINKRONISASI ICON & FALLBACK OTOMATIS ANTI-ERROR
+          # =========================================================================
           if file temp_icon/downloaded_icon | grep -qE 'image|bitmap'; then
             mv temp_icon/downloaded_icon temp_icon/icon.png
           else
@@ -187,6 +209,7 @@ jobs:
             convert temp_icon/icon.png -resize ${S}x${S} "$DIR/app_icon_production.png"
             convert temp_icon/icon.png -resize ${S}x${S} "$DIR/app_icon_production_round.png"
           done
+          # =========================================================================
           
           MAIN_ACTIVITY=$(find android/app/src/main/java -type f -name "MainActivity.java" | head -n 1)
           if [ ! -z "$MAIN_ACTIVITY" ]; then
@@ -200,82 +223,84 @@ jobs:
                mv "$MAIN_ACTIVITY" "$NEW_DIR/" || true
              fi
              
-             echo "package ${{ inputs.packageName }};" > "$NEW_DIR/MainActivity.java"
-             echo "import android.os.Bundle;" >> "$NEW_DIR/MainActivity.java"
-             echo "import android.view.View;" >> "$NEW_DIR/MainActivity.java"
-             echo "import android.webkit.WebView;" >> "$NEW_DIR/MainActivity.java"
-             echo "import android.webkit.WebSettings;" >> "$NEW_DIR/MainActivity.java"
-             echo "import android.webkit.WebResourceRequest;" >> "$NEW_DIR/MainActivity.java"
-             echo "import android.webkit.WebViewClient;" >> "$NEW_DIR/MainActivity.java"
-             echo "import android.widget.Toast;" >> "$NEW_DIR/MainActivity.java"
-             echo "import android.content.Intent;" >> "$NEW_DIR/MainActivity.java"
-             echo "import android.net.Uri;" >> "$NEW_DIR/MainActivity.java"
-             echo "import com.getcapacitor.BridgeActivity;" >> "$NEW_DIR/MainActivity.java"
-             echo "" >> "$NEW_DIR/MainActivity.java"
-             echo "public class MainActivity extends BridgeActivity {" >> "$NEW_DIR/MainActivity.java"
-             echo "    private long backPressedTime = 0;" >> "$NEW_DIR/MainActivity.java"
-             echo "    @Override" >> "$NEW_DIR/MainActivity.java"
-             echo "    public void onCreate(Bundle savedInstanceState) {" >> "$NEW_DIR/MainActivity.java"
-             echo "        super.onCreate(savedInstanceState);" >> "$NEW_DIR/MainActivity.java"
-             echo "        hideSystemUI();" >> "$NEW_DIR/MainActivity.java"
-             echo "    }" >> "$NEW_DIR/MainActivity.java"
-             echo "    @Override" >> "$NEW_DIR/MainActivity.java"
-             echo "    public void onWindowFocusChanged(boolean hasFocus) {" >> "$NEW_DIR/MainActivity.java"
-             echo "        super.onWindowFocusChanged(hasFocus);" >> "$NEW_DIR/MainActivity.java"
-             echo "        if (hasFocus) { hideSystemUI(); }" >> "$NEW_DIR/MainActivity.java"
-             echo "    }" >> "$NEW_DIR/MainActivity.java"
-             echo "    private void hideSystemUI() {" >> "$NEW_DIR/MainActivity.java"
-             echo "        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {" >> "$NEW_DIR/MainActivity.java"
-             echo "            getWindow().setDecorFitsSystemWindows(false);" >> "$NEW_DIR/MainActivity.java"
-             echo "            android.view.WindowInsetsController controller = getWindow().getInsetsController();" >> "$NEW_DIR/MainActivity.java"
-             echo "            if (controller != null) {" >> "$NEW_DIR/MainActivity.java"
-             echo "                controller.hide(android.view.WindowInsets.Type.statusBars() | android.view.WindowInsets.Type.navigationBars());" >> "$NEW_DIR/MainActivity.java"
-             echo "                controller.setSystemBarsBehavior(android.view.WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);" >> "$NEW_DIR/MainActivity.java"
-             echo "            }" >> "$NEW_DIR/MainActivity.java"
-             echo "        } else {" >> "$NEW_DIR/MainActivity.java"
-             echo "            getWindow().getDecorView().setSystemUiVisibility(" >> "$NEW_DIR/MainActivity.java"
-             echo "                View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY" >> "$NEW_DIR/MainActivity.java"
-             echo "                | View.SYSTEM_UI_FLAG_LAYOUT_STABLE" >> "$NEW_DIR/MainActivity.java"
-             echo "                | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION" >> "$NEW_DIR/MainActivity.java"
-             echo "                | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN" >> "$NEW_DIR/MainActivity.java"
-             echo "                | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION" >> "$NEW_DIR/MainActivity.java"
-             echo "                | View.SYSTEM_UI_FLAG_FULLSCREEN" >> "$NEW_DIR/MainActivity.java"
-             echo "            );" >> "$NEW_DIR/MainActivity.java"
-             echo "        }" >> "$NEW_DIR/MainActivity.java"
-             echo "    }" >> "$NEW_DIR/MainActivity.java"
-             echo "    @Override" >> "$NEW_DIR/MainActivity.java"
-             echo "    public void onStart() {" >> "$NEW_DIR/MainActivity.java"
-             echo "        super.onStart();" >> "$NEW_DIR/MainActivity.java"
-             echo "        WebView webView = this.bridge.getWebView();" >> "$NEW_DIR/MainActivity.java"
-             echo "        if (webView != null) {" >> "$NEW_DIR/MainActivity.java"
-             echo "            WebSettings settings = webView.getSettings();" >> "$NEW_DIR/MainActivity.java"
-             echo "            settings.setDomStorageEnabled(true);" >> "$NEW_DIR/MainActivity.java"
-             echo "            settings.setJavaScriptEnabled(true);" >> "$NEW_DIR/MainActivity.java"
-             echo "            settings.setMediaPlaybackRequiresUserGesture(false);" >> "$NEW_DIR/MainActivity.java"
-             echo "            settings.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);" >> "$NEW_DIR/MainActivity.java"
-             echo "            settings.setCacheMode(WebSettings.LOAD_DEFAULT);" >> "$NEW_DIR/MainActivity.java"
-             echo "            settings.setAllowFileAccessFromFileURLs(true);" >> "$NEW_DIR/MainActivity.java"
-             echo "            settings.setAllowUniversalAccessFromFileURLs(true);" >> "$NEW_DIR/MainActivity.java"
-             echo "            webView.setOverScrollMode(View.OVER_SCROLL_NEVER);" >> "$NEW_DIR/MainActivity.java"
-             echo "            /* WEBVIEW_MODE_HOOK */" >> "$NEW_DIR/MainActivity.java"
-             echo "        }" >> "$NEW_DIR/MainActivity.java"
-             echo "    }" >> "$NEW_DIR/MainActivity.java"
-             echo "    @Override" >> "$NEW_DIR/MainActivity.java"
-             echo "    public void onBackPressed() {" >> "$NEW_DIR/MainActivity.java"
-             echo "        WebView webView = this.bridge.getWebView();" >> "$NEW_DIR/MainActivity.java"
-             echo "        if (webView != null && webView.canGoBack()) {" >> "$NEW_DIR/MainActivity.java"
-             echo "            webView.goBack();" >> "$NEW_DIR/MainActivity.java"
-             echo "        } else {" >> "$NEW_DIR/MainActivity.java"
-             echo "            long t = System.currentTimeMillis();" >> "$NEW_DIR/MainActivity.java"
-             echo "            if (t - backPressedTime > 2000) {" >> "$NEW_DIR/MainActivity.java"
-             echo "                backPressedTime = t;" >> "$NEW_DIR/MainActivity.java"
-             echo "                Toast.makeText(this, \"Tekan sekali lagi untuk keluar\", Toast.LENGTH_SHORT).show();" >> "$NEW_DIR/MainActivity.java"
-             echo "            } else {" >> "$NEW_DIR/MainActivity.java"
-             echo "                super.onBackPressed();" >> "$NEW_DIR/MainActivity.java"
-             echo "            }" >> "$NEW_DIR/MainActivity.java"
-             echo "        }" >> "$NEW_DIR/MainActivity.java"
-             echo "    }" >> "$NEW_DIR/MainActivity.java"
-             echo "}" >> "$NEW_DIR/MainActivity.java"
+             cat << 'EOF' > "$NEW_DIR/MainActivity.java"
+             package ${{ inputs.packageName }};
+             import android.os.Bundle;
+             import android.view.View;
+             import android.webkit.WebView;
+             import android.webkit.WebSettings;
+             import android.webkit.WebResourceRequest;
+             import android.webkit.WebViewClient;
+             import android.widget.Toast;
+             import android.content.Intent;
+             import android.net.Uri;
+             import com.getcapacitor.BridgeActivity;
+
+             public class MainActivity extends BridgeActivity {
+                 private long backPressedTime = 0;
+                 @Override
+                 public void onCreate(Bundle savedInstanceState) {
+                     super.onCreate(savedInstanceState);
+                     hideSystemUI();
+                 }
+                 @Override
+                 public void onWindowFocusChanged(boolean hasFocus) {
+                     super.onWindowFocusChanged(hasFocus);
+                     if (hasFocus) { hideSystemUI(); }
+                 }
+                 private void hideSystemUI() {
+                     if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+                         getWindow().setDecorFitsSystemWindows(false);
+                         android.view.WindowInsetsController controller = getWindow().getInsetsController();
+                         if (controller != null) {
+                             controller.hide(android.view.WindowInsets.Type.statusBars() | android.view.WindowInsets.Type.navigationBars());
+                             controller.setSystemBarsBehavior(android.view.WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
+                         }
+                     } else {
+                         getWindow().getDecorView().setSystemUiVisibility(
+                             View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+                             | View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                             | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                             | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                             | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                             | View.SYSTEM_UI_FLAG_FULLSCREEN
+                         );
+                     }
+                 }
+                 @Override
+                 public void onStart() {
+                     super.onStart();
+                     WebView webView = this.bridge.getWebView();
+                     if (webView != null) {
+                         WebSettings settings = webView.getSettings();
+                         settings.setDomStorageEnabled(true);
+                         settings.setJavaScriptEnabled(true);
+                         settings.setMediaPlaybackRequiresUserGesture(false);
+                         settings.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
+                         settings.setCacheMode(WebSettings.LOAD_DEFAULT);
+                         settings.setAllowFileAccessFromFileURLs(true);
+                         settings.setAllowUniversalAccessFromFileURLs(true);
+                         webView.setOverScrollMode(View.OVER_SCROLL_NEVER);
+                         /* WEBVIEW_MODE_HOOK */
+                     }
+                 }
+                 @Override
+                 public void onBackPressed() {
+                     WebView webView = this.bridge.getWebView();
+                     if (webView != null && webView.canGoBack()) {
+                         webView.goBack();
+                     } else {
+                         long t = System.currentTimeMillis();
+                         if (t - backPressedTime > 2000) {
+                             backPressedTime = t;
+                             Toast.makeText(this, "Tekan sekali lagi untuk keluar", Toast.LENGTH_SHORT).show();
+                         } else {
+                             super.onBackPressed();
+                         }
+                     }
+                 }
+             }
+             EOF
              
              if [ "${{ inputs.mode }}" == "webview" ]; then
                  sed -i 's|/\* WEBVIEW_MODE_HOOK \*/|webView.setWebViewClient(new WebViewClient() { @Override public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) { String url = request.getUrl().toString(); String host = request.getUrl().getHost(); String targetUrl = "${{ inputs.url }}"; String targetHost = ""; try { targetHost = new java.net.URL(targetUrl).getHost(); } catch (Exception e) {} if (host != null \&\& targetHost != null \&\& host.contains(targetHost)) { return false; } else { Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse(url)); view.getContext().startActivity(intent); return true; } } });|g' "$NEW_DIR/MainActivity.java"
