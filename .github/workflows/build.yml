@@ -81,17 +81,17 @@ jobs:
           else
             echo "$ZIP_B64" | base64 -d -i > project.zip
             unzip -q -o project.zip -d app/www/
+            
+            # Pindahkan file konfigurasi inti ke root folder 'app'
             mv app/www/package.json app/ 2>/dev/null || echo '{"name":"app","version":"1.0.0","dependencies":{"@capacitor/core":"latest","@capacitor/android":"latest"},"devDependencies":{"@capacitor/cli":"latest"}}' > app/package.json
             mv app/www/capacitor.config.json app/ 2>/dev/null || true
             mv app/www/studio.config.json app/ 2>/dev/null || true
             mv app/www/setup.js app/ 2>/dev/null || true
           fi
           
-          if [ -f "app/setup.js" ]; then
-             sed -i "s|../android/app/|./android/app/|g" app/setup.js
-          fi
-          
           cd app
+          
+          # Inject Konfigurasi Capacitor
           node -e "
           const fs = require('fs');
           let cfg = { appId: '${{ inputs.packageName }}', appName: '${{ inputs.appName }}', webDir: 'www', bundledWebRuntime: false, server: { allowNavigation: ['*'], cleartext: true } };
@@ -105,6 +105,7 @@ jobs:
           fs.writeFileSync('capacitor.config.json', JSON.stringify(cfg, null, 2));
           "
           
+          # Install dependensi (ini akan otomatis menjalankan setup.js via postinstall untuk membuild capacitor-runtime.js)
           if ! npm install --no-audit --no-fund --legacy-peer-deps --prefer-offline > npm_log.txt 2>&1; then
              ERROR_MSG=$(tail -n 20 npm_log.txt)
              jq -n --arg id "${{ inputs.id }}" --arg log "[BUILD FAILED] System package initialization failed: $ERROR_MSG\\n" '{"id": $id, "log": $log}' | curl -s -X POST -H "Content-Type: application/json" -d @- "${{ inputs.logUrl }}"
@@ -112,14 +113,18 @@ jobs:
           fi
           
           curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[Bridge] Injecting Native Bridge Components...\\n\"}" "${{ inputs.logUrl }}" > /dev/null || true
+          
+          # Inisialisasi Android Platform
           if ! npx --yes @capacitor/cli add android > cap_log.txt 2>&1; then
              ERROR_MSG=$(tail -n 20 cap_log.txt)
              jq -n --arg id "${{ inputs.id }}" --arg log "[BUILD FAILED] Bridge injection failed: $ERROR_MSG\\n" '{"id": $id, "log": $log}' | curl -s -X POST -H "Content-Type: application/json" -d @- "${{ inputs.logUrl }}"
              exit 1
           fi
           
+          # Jalankan ulang setup.js sekarang (karena folder android sudah ada, agar manifest permission terinjeksi)
           if [ -f "setup.js" ]; then node setup.js || true; fi
-          npx cap copy android > /dev/null 2>&1 || true
+          
+          # Sinkronisasi Plugin ke Native Android
           npx cap sync android > /dev/null 2>&1 || true
 
       - name: Deep Identity Injection & Asset Sync
@@ -135,23 +140,33 @@ jobs:
           sed -i 's/@mipmap\/ic_launcher_round/@mipmap\/app_icon_production_round/g' $MANIFEST || true
           sed -i 's/@mipmap\/ic_launcher/@mipmap\/app_icon_production/g' $MANIFEST || true
           
+          # Node.js Script untuk deep injection studio.config.json ke AndroidManifest
           node -e "
           const fs = require('fs');
           const path = '$MANIFEST';
-          if (!fs.existsSync('studio.config.json')) process.exit(0);
-          try {
-            const config = JSON.parse(fs.readFileSync('studio.config.json', 'utf8'));
-            let content = fs.readFileSync(path, 'utf8');
-            if (config.permissions && Array.isArray(config.permissions)) {
-              let perms = config.permissions.map(p => '    <uses-permission android:name=\"' + p + '\" />').join('\n');
-              content = content.replace('</manifest>', perms + '\n</manifest>');
-            }
-            if (config.metaData && typeof config.metaData === 'object') {
-              let meta = Object.entries(config.metaData).map(([k, v]) => '        <meta-data android:name=\"' + k + '\" android:value=\"' + v + '\" />').join('\n');
-              content = content.replace('</application>', meta + '\n    </application>');
-            }
-            fs.writeFileSync(path, content);
-          } catch (e) { console.log(e); }
+          if (fs.existsSync('studio.config.json')) {
+            try {
+              const config = JSON.parse(fs.readFileSync('studio.config.json', 'utf8'));
+              let content = fs.readFileSync(path, 'utf8');
+              
+              if (config.permissions && Array.isArray(config.permissions)) {
+                config.permissions.forEach(p => {
+                  if (!content.includes('android:name=\"' + p + '\"')) {
+                    content = content.replace('</manifest>', '    <uses-permission android:name=\"' + p + '\" />\n</manifest>');
+                  }
+                });
+              }
+              
+              if (config.metaData && typeof config.metaData === 'object') {
+                Object.entries(config.metaData).forEach(([k, v]) => {
+                  if (!content.includes('android:name=\"' + k + '\"')) {
+                    content = content.replace('</application>', '        <meta-data android:name=\"' + k + '\" android:value=\"' + v + '\" />\n    </application>');
+                  }
+                });
+              }
+              fs.writeFileSync(path, content);
+            } catch (e) { console.log(e); }
+          }
           "
 
           sudo apt-get install -y imagemagick > /dev/null 2>&1 || true
@@ -169,6 +184,7 @@ jobs:
           done
           wait
           
+          # Rekayasa MainActivity untuk Immersive UI & WebView Bridge Maksimal
           MAIN_ACTIVITY=$(find android/app/src/main/java -type f -name "MainActivity.java" | head -n 1)
           if [ ! -z "$MAIN_ACTIVITY" ]; then
              OLD_PACKAGE=$(grep -o 'package .*;' "$MAIN_ACTIVITY" | sed 's/package //; s/;//' | tr -d '\r' | tr -d ' ')
@@ -238,6 +254,8 @@ jobs:
              echo "            settings.setMediaPlaybackRequiresUserGesture(false);" >> "$NEW_DIR/MainActivity.java"
              echo "            settings.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);" >> "$NEW_DIR/MainActivity.java"
              echo "            settings.setCacheMode(WebSettings.LOAD_DEFAULT);" >> "$NEW_DIR/MainActivity.java"
+             echo "            settings.setAllowFileAccessFromFileURLs(true);" >> "$NEW_DIR/MainActivity.java"
+             echo "            settings.setAllowUniversalAccessFromFileURLs(true);" >> "$NEW_DIR/MainActivity.java"
              echo "            webView.setOverScrollMode(View.OVER_SCROLL_NEVER);" >> "$NEW_DIR/MainActivity.java"
              
              if [ "${{ inputs.mode }}" == "webview" ]; then
