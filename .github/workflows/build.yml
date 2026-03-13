@@ -82,7 +82,6 @@ jobs:
             echo "$ZIP_B64" | base64 -d -i > project.zip
             unzip -q -o project.zip -d app/www/
             
-            # Pindahkan file konfigurasi inti ke root folder 'app'
             mv app/www/package.json app/ 2>/dev/null || echo '{"name":"app","version":"1.0.0","dependencies":{"@capacitor/core":"latest","@capacitor/android":"latest"},"devDependencies":{"@capacitor/cli":"latest"}}' > app/package.json
             mv app/www/capacitor.config.json app/ 2>/dev/null || true
             mv app/www/studio.config.json app/ 2>/dev/null || true
@@ -91,7 +90,6 @@ jobs:
           
           cd app
           
-          # Inject Konfigurasi Capacitor
           node -e "
           const fs = require('fs');
           let cfg = { appId: '${{ inputs.packageName }}', appName: '${{ inputs.appName }}', webDir: 'www', bundledWebRuntime: false, server: { allowNavigation: ['*'], cleartext: true } };
@@ -105,7 +103,6 @@ jobs:
           fs.writeFileSync('capacitor.config.json', JSON.stringify(cfg, null, 2));
           "
           
-          # Install dependensi (ini akan otomatis menjalankan setup.js via postinstall untuk membuild capacitor-runtime.js)
           if ! npm install --no-audit --no-fund --legacy-peer-deps --prefer-offline > npm_log.txt 2>&1; then
              ERROR_MSG=$(tail -n 20 npm_log.txt)
              jq -n --arg id "${{ inputs.id }}" --arg log "[BUILD FAILED] System package initialization failed: $ERROR_MSG\\n" '{"id": $id, "log": $log}' | curl -s -X POST -H "Content-Type: application/json" -d @- "${{ inputs.logUrl }}"
@@ -114,17 +111,14 @@ jobs:
           
           curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[Bridge] Injecting Native Bridge Components...\\n\"}" "${{ inputs.logUrl }}" > /dev/null || true
           
-          # Inisialisasi Android Platform
           if ! npx --yes @capacitor/cli add android > cap_log.txt 2>&1; then
              ERROR_MSG=$(tail -n 20 cap_log.txt)
              jq -n --arg id "${{ inputs.id }}" --arg log "[BUILD FAILED] Bridge injection failed: $ERROR_MSG\\n" '{"id": $id, "log": $log}' | curl -s -X POST -H "Content-Type: application/json" -d @- "${{ inputs.logUrl }}"
              exit 1
           fi
           
-          # Jalankan ulang setup.js sekarang (karena folder android sudah ada, agar manifest permission terinjeksi)
           if [ -f "setup.js" ]; then node setup.js || true; fi
           
-          # Sinkronisasi Plugin ke Native Android
           npx cap sync android > /dev/null 2>&1 || true
 
       - name: Deep Identity Injection & Asset Sync
@@ -140,7 +134,6 @@ jobs:
           sed -i 's/@mipmap\/ic_launcher_round/@mipmap\/app_icon_production_round/g' $MANIFEST || true
           sed -i 's/@mipmap\/ic_launcher/@mipmap\/app_icon_production/g' $MANIFEST || true
           
-          # Node.js Script untuk deep injection studio.config.json ke AndroidManifest
           node -e "
           const fs = require('fs');
           const path = '$MANIFEST';
@@ -169,22 +162,29 @@ jobs:
           }
           "
 
-          sudo apt-get install -y imagemagick > /dev/null 2>&1 || true
+          sudo apt-get install -y imagemagick file > /dev/null 2>&1 || true
           mkdir -p temp_icon
-          curl -sL "${{ inputs.iconUrl }}" -o temp_icon/icon.png > /dev/null 2>&1
-          if [ ! -s temp_icon/icon.png ]; then echo "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=" | base64 -d > temp_icon/icon.png; fi
           
+          # Unduh dan Validasi Icon
+          curl -sL "${{ inputs.iconUrl }}" -o temp_icon/downloaded_icon || true
+          
+          if file temp_icon/downloaded_icon | grep -qE 'image|bitmap'; then
+            mv temp_icon/downloaded_icon temp_icon/icon.png
+          else
+            # JIKA GAGAL / ICON KOSONG: Buat default Icon (Kotak Emerald tulisan APP)
+            convert -size 512x512 xc:"#10b981" -gravity center -pointsize 120 -fill white -font Arial -annotate 0 "APP" temp_icon/icon.png
+          fi
+          
+          # Hasilkan ukuran Icon secara sinkron (agar tidak gagal seperti sebelumnya)
           for SIZE in "48 mdpi" "72 hdpi" "96 xhdpi" "144 xxhdpi" "192 xxxhdpi"; do
             set -- $SIZE
             S=$1; DENS=$2
             DIR="$RES_DIR/mipmap-$DENS"
             mkdir -p "$DIR"
-            convert temp_icon/icon.png -resize ${S}x${S} "$DIR/app_icon_production.png" &
-            convert temp_icon/icon.png -resize ${S}x${S} "$DIR/app_icon_production_round.png" &
+            convert temp_icon/icon.png -resize ${S}x${S} "$DIR/app_icon_production.png"
+            convert temp_icon/icon.png -resize ${S}x${S} "$DIR/app_icon_production_round.png"
           done
-          wait
           
-          # Rekayasa MainActivity untuk Immersive UI & WebView Bridge Maksimal
           MAIN_ACTIVITY=$(find android/app/src/main/java -type f -name "MainActivity.java" | head -n 1)
           if [ ! -z "$MAIN_ACTIVITY" ]; then
              OLD_PACKAGE=$(grep -o 'package .*;' "$MAIN_ACTIVITY" | sed 's/package //; s/;//' | tr -d '\r' | tr -d ' ')
