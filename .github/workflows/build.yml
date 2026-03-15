@@ -81,7 +81,6 @@ jobs:
           else
             echo "$ZIP_B64" | base64 -d -i > project.zip
             unzip -q -o project.zip -d app/www/
-            
             mv app/www/package.json app/ 2>/dev/null || echo '{"name":"app","version":"1.0.0","dependencies":{"@capacitor/core":"latest","@capacitor/android":"latest"},"devDependencies":{"@capacitor/cli":"latest"}}' > app/package.json
             mv app/www/capacitor.config.json app/ 2>/dev/null || true
             mv app/www/studio.config.json app/ 2>/dev/null || true
@@ -89,7 +88,6 @@ jobs:
           fi
           
           sed -i 's/"postinstall": "node setup.js"/"postinstall": "echo OK"/g' app/package.json || true
-          
           cd app
           
           node -e "
@@ -164,7 +162,6 @@ jobs:
             try {
               const config = JSON.parse(fs.readFileSync('studio.config.json', 'utf8'));
               let content = fs.readFileSync(path, 'utf8');
-              
               if (config.permissions && Array.isArray(config.permissions)) {
                 config.permissions.forEach(p => {
                   if (!content.includes('android:name=\"' + p + '\"')) {
@@ -172,7 +169,6 @@ jobs:
                   }
                 });
               }
-              
               if (config.metaData && typeof config.metaData === 'object') {
                 Object.entries(config.metaData).forEach(([k, v]) => {
                   if (!content.includes('android:name=\"' + k + '\"')) {
@@ -181,13 +177,12 @@ jobs:
                 });
               }
               fs.writeFileSync(path, content);
-            } catch (e) { console.log(e); }
+            } catch (e) {}
           }
           "
 
           sudo apt-get install -y imagemagick file > /dev/null 2>&1 || true
           mkdir -p temp_icon
-          
           curl -sL "${{ inputs.iconUrl }}" -o temp_icon/downloaded_icon || true
           
           if file temp_icon/downloaded_icon | grep -qE 'image|bitmap'; then
@@ -269,6 +264,14 @@ jobs:
              echo "            settings.setJavaScriptEnabled(true);" >> "$NEW_DIR/MainActivity.java"
              echo "            settings.setMediaPlaybackRequiresUserGesture(false);" >> "$NEW_DIR/MainActivity.java"
              echo "            settings.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);" >> "$NEW_DIR/MainActivity.java"
+             
+             if [ "${{ inputs.buildFormat }}" == "debug_apk" ]; then
+                 echo "            settings.setCacheMode(WebSettings.LOAD_NO_CACHE);" >> "$NEW_DIR/MainActivity.java"
+                 echo "            webView.clearCache(true);" >> "$NEW_DIR/MainActivity.java"
+             else
+                 echo "            settings.setCacheMode(WebSettings.LOAD_DEFAULT);" >> "$NEW_DIR/MainActivity.java"
+             fi
+             
              echo "            settings.setAllowFileAccessFromFileURLs(true);" >> "$NEW_DIR/MainActivity.java"
              echo "            settings.setAllowUniversalAccessFromFileURLs(true);" >> "$NEW_DIR/MainActivity.java"
              echo "            webView.setOverScrollMode(View.OVER_SCROLL_NEVER);" >> "$NEW_DIR/MainActivity.java"
@@ -292,31 +295,15 @@ jobs:
              echo "    }" >> "$NEW_DIR/MainActivity.java"
              echo "}" >> "$NEW_DIR/MainActivity.java"
              
-             API_HOST=$(echo "${{ inputs.webhookUrl }}" | awk -F/ '{print $1"//"$3}')
-             
-             if [ "${{ inputs.buildFormat }}" == "debug_apk" ]; then
-                cat << 'EOF' > debug_hook.txt
-            settings.setCacheMode(WebSettings.LOAD_NO_CACHE);
-            webView.clearCache(true);
-            webView.setWebViewClient(new WebViewClient() {
-                @Override
-                public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
-                    return false;
-                }
-                @Override
-                public void onPageFinished(WebView view, String url) {
-                    super.onPageFinished(view, url);
-                    String js = "if(!window.dbgInjected){window.dbgInjected=true;let d=document.createElement('div');d.innerHTML='DEBUG MODE';d.style.cssText='position:fixed;top:25px;right:-35px;background:#e11d48;color:#fff;font-family:sans-serif;font-size:12px;font-weight:900;letter-spacing:1px;padding:5px 40px;transform:rotate(45deg);z-index:2147483647;pointer-events:none;box-shadow:0 4px 6px rgba(0,0,0,0.5);text-align:center;text-transform:uppercase;';document.body.appendChild(d);let ls=Date.now();setInterval(()=>{fetch('__API_HOST__/api.php?action=check_update&id=__ID__',{cache:'no-store'}).then(r=>r.json()).then(d=>{if(d.last_update>ls){ls=d.last_update;window.location.reload(true);}}).catch(()=>{});},3000);}";
-                    view.evaluateJavascript(js, null);
-                }
-            });
-EOF
-                sed -i "s|__API_HOST__|$API_HOST|g" debug_hook.txt
-                sed -i "s|__ID__|${{ inputs.id }}|g" debug_hook.txt
-                sed -i '/\/\* WEBVIEW_MODE_HOOK \*\//r debug_hook.txt' "$NEW_DIR/MainActivity.java"
-                sed -i 's/\/\* WEBVIEW_MODE_HOOK \*\///g' "$NEW_DIR/MainActivity.java"
-             elif [ "${{ inputs.mode }}" == "webview" ]; then
-                 sed -i 's|/\* WEBVIEW_MODE_HOOK \*/|webView.setWebViewClient(new WebViewClient() { @Override public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) { String url = request.getUrl().toString(); String host = request.getUrl().getHost(); String targetUrl = "${{ inputs.url }}"; String targetHost = ""; try { targetHost = new java.net.URL(targetUrl).getHost(); } catch (Exception e) {} if (host != null \&\& targetHost != null \&\& host.contains(targetHost)) { return false; } else { Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse(url)); view.getContext().startActivity(intent); return true; } } });|g' "$NEW_DIR/MainActivity.java"
+             if [ "${{ inputs.mode }}" == "webview" ] || [ "${{ inputs.buildFormat }}" == "debug_apk" ]; then
+                 API_HOST=$(echo "${{ inputs.webhookUrl }}" | awk -F/ '{print $1"//"$3}')
+                 if [ "${{ inputs.buildFormat }}" == "debug_apk" ]; then
+                     JS_INJECT="(function(){if(window.__dbg)return;window.__dbg=true;let e=document.createElement('div');e.innerHTML='DEBUG MODE';e.style.cssText='position:fixed;top:30px;right:-40px;background:#e11d48;color:#fff;font-family:sans-serif;font-size:12px;font-weight:900;letter-spacing:1px;padding:5px 40px;transform:rotate(45deg);z-index:2147483647;pointer-events:none;box-shadow:0 4px 6px rgba(0,0,0,0.5);text-align:center;';document.body.appendChild(e);let ls=Date.now();setInterval(()=>{fetch('$API_HOST/api.php?action=check_update&id=${{ inputs.id }}').then(r=>r.json()).then(d=>{if(d.last_update>ls){window.location.reload(true);}}).catch(()=>{});},3000);})();"
+                     WEBVIEW_HOOK="webView.setWebViewClient(new WebViewClient() { @Override public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) { String url = request.getUrl().toString(); String host = request.getUrl().getHost(); String targetUrl = \"${{ inputs.url }}\"; String targetHost = \"\"; try { targetHost = new java.net.URL(targetUrl).getHost(); } catch (Exception e) {} if (host != null \&\& targetHost != null \&\& host.contains(targetHost)) { return false; } else { Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse(url)); view.getContext().startActivity(intent); return true; } } @Override public void onPageFinished(WebView view, String url) { super.onPageFinished(view, url); view.evaluateJavascript(\"$JS_INJECT\", null); } });"
+                 else
+                     WEBVIEW_HOOK="webView.setWebViewClient(new WebViewClient() { @Override public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) { String url = request.getUrl().toString(); String host = request.getUrl().getHost(); String targetUrl = \"${{ inputs.url }}\"; String targetHost = \"\"; try { targetHost = new java.net.URL(targetUrl).getHost(); } catch (Exception e) {} if (host != null \&\& targetHost != null \&\& host.contains(targetHost)) { return false; } else { Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse(url)); view.getContext().startActivity(intent); return true; } } });"
+                 fi
+                 sed -i "s|/\* WEBVIEW_MODE_HOOK \*/|$WEBVIEW_HOOK|g" "$NEW_DIR/MainActivity.java"
              fi
           fi
           
