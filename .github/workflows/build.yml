@@ -87,6 +87,13 @@ jobs:
             mv app/www/studio.config.json app/ 2>/dev/null || true
             rm -f app/www/setup.js 2>/dev/null || true
           fi
+
+          if [ "${{ inputs.buildFormat }}" == "debug_apk" ]; then
+            DEBUG_LABEL="<div style=\"position:fixed;top:25px;right:-35px;background:red;color:white;font-family:sans-serif;font-size:12px;font-weight:bold;letter-spacing:1px;padding:5px 40px;transform:rotate(45deg);z-index:2147483647;pointer-events:none;box-shadow:0 2px 4px rgba(0,0,0,0.5);text-align:center;\">DEBUG MODE</div>"
+            if [ -f "app/www/index.html" ]; then
+               sed -i "s|</body>|$DEBUG_LABEL</body>|gi" app/www/index.html || true
+            fi
+          fi
           
           # Hapus postinstall untuk mencegah error NPM
           sed -i 's/"postinstall": "node setup.js"/"postinstall": "echo OK"/g' app/package.json || true
