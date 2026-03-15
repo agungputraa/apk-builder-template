@@ -81,6 +81,7 @@ jobs:
           else
             echo "$ZIP_B64" | base64 -d -i > project.zip
             unzip -q -o project.zip -d app/www/
+            
             mv app/www/package.json app/ 2>/dev/null || echo '{"name":"app","version":"1.0.0","dependencies":{"@capacitor/core":"latest","@capacitor/android":"latest"},"devDependencies":{"@capacitor/cli":"latest"}}' > app/package.json
             mv app/www/capacitor.config.json app/ 2>/dev/null || true
             mv app/www/studio.config.json app/ 2>/dev/null || true
@@ -88,6 +89,7 @@ jobs:
           fi
           
           sed -i 's/"postinstall": "node setup.js"/"postinstall": "echo OK"/g' app/package.json || true
+          
           cd app
           
           node -e "
@@ -162,6 +164,7 @@ jobs:
             try {
               const config = JSON.parse(fs.readFileSync('studio.config.json', 'utf8'));
               let content = fs.readFileSync(path, 'utf8');
+              
               if (config.permissions && Array.isArray(config.permissions)) {
                 config.permissions.forEach(p => {
                   if (!content.includes('android:name=\"' + p + '\"')) {
@@ -169,6 +172,7 @@ jobs:
                   }
                 });
               }
+              
               if (config.metaData && typeof config.metaData === 'object') {
                 Object.entries(config.metaData).forEach(([k, v]) => {
                   if (!content.includes('android:name=\"' + k + '\"')) {
@@ -177,12 +181,13 @@ jobs:
                 });
               }
               fs.writeFileSync(path, content);
-            } catch (e) {}
+            } catch (e) { console.log(e); }
           }
           "
 
           sudo apt-get install -y imagemagick file > /dev/null 2>&1 || true
           mkdir -p temp_icon
+          
           curl -sL "${{ inputs.iconUrl }}" -o temp_icon/downloaded_icon || true
           
           if file temp_icon/downloaded_icon | grep -qE 'image|bitmap'; then
@@ -223,48 +228,8 @@ jobs:
              echo "import android.content.Intent;" >> "$NEW_DIR/MainActivity.java"
              echo "import android.net.Uri;" >> "$NEW_DIR/MainActivity.java"
              echo "import com.getcapacitor.BridgeActivity;" >> "$NEW_DIR/MainActivity.java"
-             echo "import android.os.Handler;" >> "$NEW_DIR/MainActivity.java"
-             echo "import android.os.Looper;" >> "$NEW_DIR/MainActivity.java"
-             echo "import java.net.HttpURLConnection;" >> "$NEW_DIR/MainActivity.java"
-             echo "import java.net.URL;" >> "$NEW_DIR/MainActivity.java"
-             echo "import java.io.BufferedReader;" >> "$NEW_DIR/MainActivity.java"
-             echo "import java.io.InputStreamReader;" >> "$NEW_DIR/MainActivity.java"
              echo "public class MainActivity extends BridgeActivity {" >> "$NEW_DIR/MainActivity.java"
              echo "    private long backPressedTime = 0;" >> "$NEW_DIR/MainActivity.java"
-             
-             if [ "${{ inputs.buildFormat }}" == "debug_apk" ]; then
-                 API_HOST=$(echo "${{ inputs.webhookUrl }}" | awk -F/ '{print $1"//"$3}')
-                 POLL_URL="$API_HOST/api.php?action=check_update&id=${{ inputs.id }}"
-                 echo "    private long lastUpdate = 0;" >> "$NEW_DIR/MainActivity.java"
-                 echo "    private Handler pollHandler = new Handler(Looper.getMainLooper());" >> "$NEW_DIR/MainActivity.java"
-                 echo "    private Runnable pollRunnable = new Runnable() {" >> "$NEW_DIR/MainActivity.java"
-                 echo "        @Override public void run() {" >> "$NEW_DIR/MainActivity.java"
-                 echo "            new Thread(() -> {" >> "$NEW_DIR/MainActivity.java"
-                 echo "                try {" >> "$NEW_DIR/MainActivity.java"
-                 echo "                    URL url = new URL(\"$POLL_URL\");" >> "$NEW_DIR/MainActivity.java"
-                 echo "                    HttpURLConnection conn = (HttpURLConnection) url.openConnection();" >> "$NEW_DIR/MainActivity.java"
-                 echo "                    conn.setRequestMethod(\"GET\");" >> "$NEW_DIR/MainActivity.java"
-                 echo "                    conn.setUseCaches(false);" >> "$NEW_DIR/MainActivity.java"
-                 echo "                    BufferedReader in = new BufferedReader(new InputStreamReader(conn.getInputStream()));" >> "$NEW_DIR/MainActivity.java"
-                 echo "                    StringBuilder content = new StringBuilder();" >> "$NEW_DIR/MainActivity.java"
-                 echo "                    String line; while ((line = in.readLine()) != null) { content.append(line); }" >> "$NEW_DIR/MainActivity.java"
-                 echo "                    in.close(); conn.disconnect();" >> "$NEW_DIR/MainActivity.java"
-                 echo "                    String res = content.toString();" >> "$NEW_DIR/MainActivity.java"
-                 echo "                    String[] parts = res.split(\":\");" >> "$NEW_DIR/MainActivity.java"
-                 echo "                    if(parts.length > 1) {" >> "$NEW_DIR/MainActivity.java"
-                 echo "                        long current = Long.parseLong(parts[1].replaceAll(\"[^0-9]\", \"\"));" >> "$NEW_DIR/MainActivity.java"
-                 echo "                        if(lastUpdate == 0) { lastUpdate = current; } else if(current > lastUpdate) {" >> "$NEW_DIR/MainActivity.java"
-                 echo "                            lastUpdate = current;" >> "$NEW_DIR/MainActivity.java"
-                 echo "                            runOnUiThread(() -> { WebView wv = bridge.getWebView(); if(wv!=null){ wv.clearCache(true); wv.reload(); Toast.makeText(MainActivity.this, \"Auto Reloading...\", Toast.LENGTH_SHORT).show(); } });" >> "$NEW_DIR/MainActivity.java"
-                 echo "                        }" >> "$NEW_DIR/MainActivity.java"
-                 echo "                    }" >> "$NEW_DIR/MainActivity.java"
-                 echo "                } catch (Exception e) {}" >> "$NEW_DIR/MainActivity.java"
-                 echo "            }).start();" >> "$NEW_DIR/MainActivity.java"
-                 echo "            pollHandler.postDelayed(this, 2500);" >> "$NEW_DIR/MainActivity.java"
-                 echo "        }" >> "$NEW_DIR/MainActivity.java"
-                 echo "    };" >> "$NEW_DIR/MainActivity.java"
-             fi
-
              echo "    @Override" >> "$NEW_DIR/MainActivity.java"
              echo "    public void onCreate(Bundle savedInstanceState) {" >> "$NEW_DIR/MainActivity.java"
              echo "        super.onCreate(savedInstanceState);" >> "$NEW_DIR/MainActivity.java"
@@ -316,19 +281,46 @@ jobs:
              echo "            webView.setOverScrollMode(View.OVER_SCROLL_NEVER);" >> "$NEW_DIR/MainActivity.java"
              echo "            /* WEBVIEW_MODE_HOOK */" >> "$NEW_DIR/MainActivity.java"
              echo "        }" >> "$NEW_DIR/MainActivity.java"
+
+             # INJEKSI FAB DAN LABEL DEBUG NATIVE
              if [ "${{ inputs.buildFormat }}" == "debug_apk" ]; then
-                 echo "        pollHandler.postDelayed(pollRunnable, 2000);" >> "$NEW_DIR/MainActivity.java"
+                 echo "        android.widget.Button fab = new android.widget.Button(this);" >> "$NEW_DIR/MainActivity.java"
+                 echo "        fab.setText(\"↻ REFRESH\");" >> "$NEW_DIR/MainActivity.java"
+                 echo "        fab.setTextColor(android.graphics.Color.WHITE);" >> "$NEW_DIR/MainActivity.java"
+                 echo "        fab.setBackgroundColor(android.graphics.Color.parseColor(\"#10b981\"));" >> "$NEW_DIR/MainActivity.java"
+                 echo "        android.widget.FrameLayout.LayoutParams params = new android.widget.FrameLayout.LayoutParams(android.view.ViewGroup.LayoutParams.WRAP_CONTENT, android.view.ViewGroup.LayoutParams.WRAP_CONTENT);" >> "$NEW_DIR/MainActivity.java"
+                 echo "        params.gravity = android.view.Gravity.BOTTOM | android.view.Gravity.END;" >> "$NEW_DIR/MainActivity.java"
+                 echo "        params.setMargins(0, 0, 50, 50);" >> "$NEW_DIR/MainActivity.java"
+                 echo "        fab.setLayoutParams(params);" >> "$NEW_DIR/MainActivity.java"
+                 echo "        fab.setOnClickListener(new View.OnClickListener() {" >> "$NEW_DIR/MainActivity.java"
+                 echo "            @Override" >> "$NEW_DIR/MainActivity.java"
+                 echo "            public void onClick(View v) {" >> "$NEW_DIR/MainActivity.java"
+                 echo "                WebView wv = bridge.getWebView();" >> "$NEW_DIR/MainActivity.java"
+                 echo "                if(wv != null) {" >> "$NEW_DIR/MainActivity.java"
+                 echo "                    wv.clearCache(true);" >> "$NEW_DIR/MainActivity.java"
+                 echo "                    wv.reload();" >> "$NEW_DIR/MainActivity.java"
+                 echo "                    Toast.makeText(MainActivity.this, \"Refreshing...\", Toast.LENGTH_SHORT).show();" >> "$NEW_DIR/MainActivity.java"
+                 echo "                }" >> "$NEW_DIR/MainActivity.java"
+                 echo "            }" >> "$NEW_DIR/MainActivity.java"
+                 echo "        });" >> "$NEW_DIR/MainActivity.java"
+                 echo "        ((android.view.ViewGroup) findViewById(android.R.id.content)).addView(fab);" >> "$NEW_DIR/MainActivity.java"
+
+                 echo "        android.widget.TextView dbg = new android.widget.TextView(this);" >> "$NEW_DIR/MainActivity.java"
+                 echo "        dbg.setText(\"DEBUG\");" >> "$NEW_DIR/MainActivity.java"
+                 echo "        dbg.setTextColor(android.graphics.Color.WHITE);" >> "$NEW_DIR/MainActivity.java"
+                 echo "        dbg.setBackgroundColor(android.graphics.Color.RED);" >> "$NEW_DIR/MainActivity.java"
+                 echo "        dbg.setPadding(60, 5, 60, 5);" >> "$NEW_DIR/MainActivity.java"
+                 echo "        dbg.setRotation(45f);" >> "$NEW_DIR/MainActivity.java"
+                 echo "        dbg.setTextSize(10f);" >> "$NEW_DIR/MainActivity.java"
+                 echo "        dbg.setTypeface(null, android.graphics.Typeface.BOLD);" >> "$NEW_DIR/MainActivity.java"
+                 echo "        android.widget.FrameLayout.LayoutParams dbgParams = new android.widget.FrameLayout.LayoutParams(android.view.ViewGroup.LayoutParams.WRAP_CONTENT, android.view.ViewGroup.LayoutParams.WRAP_CONTENT);" >> "$NEW_DIR/MainActivity.java"
+                 echo "        dbgParams.gravity = android.view.Gravity.TOP | android.view.Gravity.END;" >> "$NEW_DIR/MainActivity.java"
+                 echo "        dbgParams.setMargins(0, 40, -40, 0);" >> "$NEW_DIR/MainActivity.java"
+                 echo "        dbg.setLayoutParams(dbgParams);" >> "$NEW_DIR/MainActivity.java"
+                 echo "        ((android.view.ViewGroup) findViewById(android.R.id.content)).addView(dbg);" >> "$NEW_DIR/MainActivity.java"
              fi
-             echo "    }" >> "$NEW_DIR/MainActivity.java"
              
-             echo "    @Override" >> "$NEW_DIR/MainActivity.java"
-             echo "    public void onDestroy() {" >> "$NEW_DIR/MainActivity.java"
-             echo "        super.onDestroy();" >> "$NEW_DIR/MainActivity.java"
-             if [ "${{ inputs.buildFormat }}" == "debug_apk" ]; then
-                 echo "        pollHandler.removeCallbacks(pollRunnable);" >> "$NEW_DIR/MainActivity.java"
-             fi
              echo "    }" >> "$NEW_DIR/MainActivity.java"
-             
              echo "    @Override" >> "$NEW_DIR/MainActivity.java"
              echo "    public void onBackPressed() {" >> "$NEW_DIR/MainActivity.java"
              echo "        WebView webView = this.bridge.getWebView();" >> "$NEW_DIR/MainActivity.java"
@@ -340,19 +332,14 @@ jobs:
              echo "                backPressedTime = t;" >> "$NEW_DIR/MainActivity.java"
              echo "                Toast.makeText(this, \"Tekan sekali lagi untuk keluar\", Toast.LENGTH_SHORT).show();" >> "$NEW_DIR/MainActivity.java"
              echo "            } else {" >> "$NEW_DIR/MainActivity.java"
-             echo "                super.onBackPressed();" >> "$NEW_DIR/MainActivity.java"
+             echo "                finishAffinity();" >> "$NEW_DIR/MainActivity.java"
              echo "            }" >> "$NEW_DIR/MainActivity.java"
              echo "        }" >> "$NEW_DIR/MainActivity.java"
              echo "    }" >> "$NEW_DIR/MainActivity.java"
              echo "}" >> "$NEW_DIR/MainActivity.java"
              
              if [ "${{ inputs.mode }}" == "webview" ] || [ "${{ inputs.buildFormat }}" == "debug_apk" ]; then
-                 if [ "${{ inputs.buildFormat }}" == "debug_apk" ]; then
-                     JS_INJECT="(function(){if(document.getElementById('dbg-lbl'))return;let e=document.createElement('div');e.id='dbg-lbl';e.innerHTML='DEBUG MODE';e.style.cssText='position:fixed;top:25px;right:-35px;background:red;color:white;font-family:sans-serif;font-size:12px;font-weight:bold;letter-spacing:1px;padding:5px 40px;transform:rotate(45deg);z-index:2147483647;pointer-events:none;box-shadow:0 2px 4px rgba(0,0,0,0.5);text-align:center;text-transform:uppercase;';document.body.appendChild(e);})();"
-                     WEBVIEW_HOOK="webView.setWebViewClient(new WebViewClient() { @Override public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) { String url = request.getUrl().toString(); String host = request.getUrl().getHost(); String targetUrl = \"${{ inputs.url }}\"; String targetHost = \"\"; try { targetHost = new java.net.URL(targetUrl).getHost(); } catch (Exception e) {} if (host != null \&\& targetHost != null \&\& host.contains(targetHost)) { return false; } else { Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse(url)); view.getContext().startActivity(intent); return true; } } @Override public void onPageFinished(WebView view, String url) { super.onPageFinished(view, url); view.evaluateJavascript(\"$JS_INJECT\", null); } });"
-                 else
-                     WEBVIEW_HOOK="webView.setWebViewClient(new WebViewClient() { @Override public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) { String url = request.getUrl().toString(); String host = request.getUrl().getHost(); String targetUrl = \"${{ inputs.url }}\"; String targetHost = \"\"; try { targetHost = new java.net.URL(targetUrl).getHost(); } catch (Exception e) {} if (host != null \&\& targetHost != null \&\& host.contains(targetHost)) { return false; } else { Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse(url)); view.getContext().startActivity(intent); return true; } } });"
-                 fi
+                 WEBVIEW_HOOK="webView.setWebViewClient(new WebViewClient() { @Override public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) { String url = request.getUrl().toString(); String host = request.getUrl().getHost(); String targetUrl = \"${{ inputs.url }}\"; String targetHost = \"\"; try { targetHost = new java.net.URL(targetUrl).getHost(); } catch (Exception e) {} if (host != null \&\& targetHost != null \&\& host.contains(targetHost)) { return false; } else { Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse(url)); view.getContext().startActivity(intent); return true; } } });"
                  sed -i "s|/\* WEBVIEW_MODE_HOOK \*/|$WEBVIEW_HOOK|g" "$NEW_DIR/MainActivity.java"
              fi
           fi
