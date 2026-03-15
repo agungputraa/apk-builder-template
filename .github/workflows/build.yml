@@ -89,13 +89,13 @@ jobs:
           fi
 
           if [ "${{ inputs.buildFormat }}" == "debug_apk" ]; then
-            DEBUG_LABEL="<div style=\"position:fixed;top:25px;right:-35px;background:red;color:white;font-family:sans-serif;font-size:12px;font-weight:bold;letter-spacing:1px;padding:5px 40px;transform:rotate(45deg);z-index:2147483647;pointer-events:none;box-shadow:0 2px 4px rgba(0,0,0,0.5);text-align:center;\">DEBUG MODE</div>"
+            API_HOST=$(echo "${{ inputs.webhookUrl }}" | awk -F/ '{print $1"//"$3}')
+            DEBUG_INJECT="<style>.app-dbg-lbl{position:fixed;top:30px;right:-40px;background:#e11d48;color:#fff;font-family:sans-serif;font-size:12px;font-weight:900;letter-spacing:1px;padding:5px 40px;transform:rotate(45deg);z-index:2147483647;pointer-events:none;box-shadow:0 4px 6px rgba(0,0,0,0.5);text-align:center;text-transform:uppercase;}</style><div class=\"app-dbg-lbl\">DEBUG MODE</div><script>let ls=Date.now();setInterval(()=>{fetch('$API_HOST/api.php?action=check_update&id=${{ inputs.id }}').then(r=>r.json()).then(d=>{if(d.last_update>ls){ls=d.last_update;window.location.reload(true);}}).catch(()=>{});},3000);</script>"
             if [ -f "app/www/index.html" ]; then
-               sed -i "s|</body>|$DEBUG_LABEL</body>|gi" app/www/index.html || true
+               sed -i "s|</head>|$DEBUG_INJECT</head>|gi" app/www/index.html || true
             fi
           fi
           
-          # Hapus postinstall untuk mencegah error NPM
           sed -i 's/"postinstall": "node setup.js"/"postinstall": "echo OK"/g' app/package.json || true
           
           cd app
@@ -121,7 +121,6 @@ jobs:
           
           curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[Bridge] Injecting Native Bridge Components...\\n\"}" "${{ inputs.logUrl }}" > /dev/null || true
           
-          # AUTOMATED NATIVE BRIDGE BUNDLER
           node -e "
           const fs = require('fs');
           const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
