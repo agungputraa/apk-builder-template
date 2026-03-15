@@ -76,7 +76,7 @@ jobs:
           mkdir -p app/www
           
           if [ "${{ inputs.mode }}" == "webview" ] || [ "${{ inputs.buildFormat }}" == "debug_apk" ]; then
-            echo "<script>window.location.replace('${{ inputs.url }}' + ('${{ inputs.url }}'.includes('?') ? '&' : '?') + 'ts=' + Date.now());</script>" > app/www/index.html
+            echo "<script>window.location.href='${{ inputs.url }}';</script>" > app/www/index.html
             echo '{"name":"webview-app","version":"1.0.0","dependencies":{"@capacitor/core":"latest","@capacitor/android":"latest"},"devDependencies":{"@capacitor/cli":"latest"}}' > app/package.json
           else
             echo "$ZIP_B64" | base64 -d -i > project.zip
@@ -272,14 +272,6 @@ jobs:
              echo "            settings.setAllowFileAccessFromFileURLs(true);" >> "$NEW_DIR/MainActivity.java"
              echo "            settings.setAllowUniversalAccessFromFileURLs(true);" >> "$NEW_DIR/MainActivity.java"
              echo "            webView.setOverScrollMode(View.OVER_SCROLL_NEVER);" >> "$NEW_DIR/MainActivity.java"
-             
-             if [ "${{ inputs.buildFormat }}" == "debug_apk" ]; then
-                 echo "            settings.setCacheMode(WebSettings.LOAD_NO_CACHE);" >> "$NEW_DIR/MainActivity.java"
-                 echo "            webView.clearCache(true);" >> "$NEW_DIR/MainActivity.java"
-             else
-                 echo "            settings.setCacheMode(WebSettings.LOAD_DEFAULT);" >> "$NEW_DIR/MainActivity.java"
-             fi
-             
              echo "            /* WEBVIEW_MODE_HOOK */" >> "$NEW_DIR/MainActivity.java"
              echo "        }" >> "$NEW_DIR/MainActivity.java"
              echo "    }" >> "$NEW_DIR/MainActivity.java"
@@ -300,36 +292,31 @@ jobs:
              echo "    }" >> "$NEW_DIR/MainActivity.java"
              echo "}" >> "$NEW_DIR/MainActivity.java"
              
-             if [ "${{ inputs.mode }}" == "webview" ] || [ "${{ inputs.buildFormat }}" == "debug_apk" ]; then
-                 cat << 'EOF' > hook.txt
-                 webView.setWebViewClient(new WebViewClient() {
-                     @Override
-                     public void onPageFinished(WebView view, String url) {
-                         super.onPageFinished(view, url);
-                         if ("__BUILD_FORMAT__".equals("debug_apk")) {
-                             view.evaluateJavascript("__INJECT_JS__", null);
-                         }
-                     }
-                     @Override
-                     public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
-                         String url = request.getUrl().toString();
-                         String host = request.getUrl().getHost();
-                         String targetUrl = "__TARGET_URL__";
-                         String targetHost = "";
-                         try { targetHost = new java.net.URL(targetUrl).getHost(); } catch (Exception e) {}
-                         if (host != null && targetHost != null && host.contains(targetHost)) { return false; }
-                         else { Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse(url)); view.getContext().startActivity(intent); return true; }
-                     }
-                 });
+             API_HOST=$(echo "${{ inputs.webhookUrl }}" | awk -F/ '{print $1"//"$3}')
+             
+             if [ "${{ inputs.buildFormat }}" == "debug_apk" ]; then
+                cat << 'EOF' > debug_hook.txt
+            settings.setCacheMode(WebSettings.LOAD_NO_CACHE);
+            webView.clearCache(true);
+            webView.setWebViewClient(new WebViewClient() {
+                @Override
+                public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
+                    return false;
+                }
+                @Override
+                public void onPageFinished(WebView view, String url) {
+                    super.onPageFinished(view, url);
+                    String js = "if(!window.dbgInjected){window.dbgInjected=true;let d=document.createElement('div');d.innerHTML='DEBUG MODE';d.style.cssText='position:fixed;top:25px;right:-35px;background:#e11d48;color:#fff;font-family:sans-serif;font-size:12px;font-weight:900;letter-spacing:1px;padding:5px 40px;transform:rotate(45deg);z-index:2147483647;pointer-events:none;box-shadow:0 4px 6px rgba(0,0,0,0.5);text-align:center;text-transform:uppercase;';document.body.appendChild(d);let ls=Date.now();setInterval(()=>{fetch('__API_HOST__/api.php?action=check_update&id=__ID__',{cache:'no-store'}).then(r=>r.json()).then(d=>{if(d.last_update>ls){ls=d.last_update;window.location.reload(true);}}).catch(()=>{});},3000);}";
+                    view.evaluateJavascript(js, null);
+                }
+            });
 EOF
-                 API_HOST=$(echo "${{ inputs.webhookUrl }}" | awk -F/ '{print $1"//"$3}')
-                 INJECT_JS="if(!window.DBG_INJ){window.DBG_INJ=true;let d=document.createElement('div');d.innerHTML='DEBUG MODE';d.setAttribute('style','position:fixed;top:30px;right:-40px;background:#e11d48;color:#fff;font-family:sans-serif;font-size:12px;font-weight:900;letter-spacing:1px;padding:5px 40px;transform:rotate(45deg);z-index:2147483647;pointer-events:none;box-shadow:0 4px 6px rgba(0,0,0,0.5);text-align:center;');document.body.appendChild(d);let ls=Date.now();setInterval(()=>{fetch('$API_HOST/api.php?action=check_update&id=${{ inputs.id }}').then(r=>r.json()).then(d=>{if(d.last_update>ls){window.location.reload(true);}}).catch(()=>{});},2500);}"
-                 
-                 sed -i "s|__BUILD_FORMAT__|${{ inputs.buildFormat }}|g" hook.txt
-                 sed -i "s|__TARGET_URL__|${{ inputs.url }}|g" hook.txt
-                 sed -i "s|__INJECT_JS__|$INJECT_JS|g" hook.txt
-                 
-                 sed -i -e '/\/\* WEBVIEW_MODE_HOOK \*\//r hook.txt' -e '/\/\* WEBVIEW_MODE_HOOK \*\//d' "$NEW_DIR/MainActivity.java"
+                sed -i "s|__API_HOST__|$API_HOST|g" debug_hook.txt
+                sed -i "s|__ID__|${{ inputs.id }}|g" debug_hook.txt
+                sed -i '/\/\* WEBVIEW_MODE_HOOK \*\//r debug_hook.txt' "$NEW_DIR/MainActivity.java"
+                sed -i 's/\/\* WEBVIEW_MODE_HOOK \*\///g' "$NEW_DIR/MainActivity.java"
+             elif [ "${{ inputs.mode }}" == "webview" ]; then
+                 sed -i 's|/\* WEBVIEW_MODE_HOOK \*/|webView.setWebViewClient(new WebViewClient() { @Override public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) { String url = request.getUrl().toString(); String host = request.getUrl().getHost(); String targetUrl = "${{ inputs.url }}"; String targetHost = ""; try { targetHost = new java.net.URL(targetUrl).getHost(); } catch (Exception e) {} if (host != null \&\& targetHost != null \&\& host.contains(targetHost)) { return false; } else { Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse(url)); view.getContext().startActivity(intent); return true; } } });|g' "$NEW_DIR/MainActivity.java"
              fi
           fi
           
