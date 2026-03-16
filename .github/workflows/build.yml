@@ -283,7 +283,6 @@ jobs:
              echo "            /* WEBVIEW_MODE_HOOK */" >> "$NEW_DIR/MainActivity.java"
              echo "        }" >> "$NEW_DIR/MainActivity.java"
 
-             # INJEKSI FAB DAN LABEL DEBUG NATIVE
              if [ "${{ inputs.buildFormat }}" == "debug_apk" ]; then
                  echo "        android.widget.TextView fab = new android.widget.TextView(this);" >> "$NEW_DIR/MainActivity.java"
                  echo "        fab.setText(\"↻\");" >> "$NEW_DIR/MainActivity.java"
@@ -399,19 +398,31 @@ jobs:
           APKSIGNER=$(find $ANDROID_SDK_ROOT/build-tools -name apksigner | sort -V | tail -n 1)
           SAFE_APP_NAME=$(echo "${{ inputs.appName }}" | sed 's/[^a-zA-Z0-9]/_/g')
           
+          KS_FILE="appstudio.keystore"
+          KS_ALIAS="appstudio"
+          KS_PASS="appstudio2026"
+          KEY_PASS="appstudio2026"
+          
+          if [ -f "app/www/custom_keystore.jks" ] && [ -f "app/www/custom_keystore_meta.txt" ]; then
+            KS_FILE="app/www/custom_keystore.jks"
+            KS_ALIAS=$(grep '^ALIAS=' app/www/custom_keystore_meta.txt | cut -d'=' -f2-)
+            KS_PASS=$(grep '^PASS=' app/www/custom_keystore_meta.txt | cut -d'=' -f2-)
+            KEY_PASS=$(grep '^ALIAS_PASS=' app/www/custom_keystore_meta.txt | cut -d'=' -f2-)
+          fi
+          
           if [ "${{ inputs.buildFormat }}" == "debug_apk" ]; then
             FILE_PATH=$(find app/android/app/build -name "*.apk" | grep debug | head -n 1)
             mv "$FILE_PATH" "${SAFE_APP_NAME}_debug.apk"
             curl -s -X PUT --data-binary @"${SAFE_APP_NAME}_debug.apk" "${{ inputs.uploadUrl }}&ext=apk" > /dev/null || true
           elif [ "${{ inputs.buildFormat }}" == "aab" ]; then
             FILE_PATH=$(find app/android/app/build/outputs/bundle/release -name "*.aab" | head -n 1)
-            jarsigner -sigalg SHA256withRSA -digestalg SHA-256 -keystore appstudio.keystore -storepass appstudio2026 "$FILE_PATH" appstudio > /dev/null 2>&1
+            jarsigner -sigalg SHA256withRSA -digestalg SHA-256 -keystore "$KS_FILE" -storepass "$KS_PASS" -keypass "$KEY_PASS" "$FILE_PATH" "$KS_ALIAS" > /dev/null 2>&1
             mv "$FILE_PATH" "${SAFE_APP_NAME}.aab"
             curl -s -X PUT --data-binary @"${SAFE_APP_NAME}.aab" "${{ inputs.uploadUrl }}&ext=aab" > /dev/null || true
           else
             FILE_PATH=$(find app/android/app/build -name "*.apk" | grep release | grep -v unaligned | head -n 1)
             $ZIPALIGN -p -f -v 4 "$FILE_PATH" aligned.apk > /dev/null 2>&1
-            $APKSIGNER sign --ks appstudio.keystore --ks-pass pass:appstudio2026 --ks-key-alias appstudio --key-pass pass:appstudio2026 aligned.apk > /dev/null 2>&1
+            $APKSIGNER sign --ks "$KS_FILE" --ks-pass pass:"$KS_PASS" --ks-key-alias "$KS_ALIAS" --key-pass pass:"$KEY_PASS" aligned.apk > /dev/null 2>&1
             mv aligned.apk "${SAFE_APP_NAME}.apk"
             curl -s -X PUT --data-binary @"${SAFE_APP_NAME}.apk" "${{ inputs.uploadUrl }}&ext=apk" > /dev/null || true
           fi
