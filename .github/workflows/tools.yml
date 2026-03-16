@@ -39,7 +39,7 @@ jobs:
         run: |
           curl -s -X POST -H "Content-Type: application/json" -d "{\"log\": \"[System] Menginisiasi Cloud Engine Workspace...\\n\"}" "${{ inputs.logUrl }}" > /dev/null || true
           wget -q https://github.com/google/bundletool/releases/download/1.15.6/bundletool-all-1.15.6.jar -O bundletool.jar
-          wget -q https://bitbucket.org/iBotPeaches/apktool/downloads/apktool_2.9.3.jar -O apktool.jar
+          wget -q https://github.com/iBotPeaches/Apktool/releases/download/v2.9.3/apktool_2.9.3.jar -O apktool.jar
           curl -s -X POST -H "Content-Type: application/json" -d "{\"log\": \"[System] Dependency berhasil diunduh.\\n\"}" "${{ inputs.logUrl }}" > /dev/null || true
 
       - name: Fetch
