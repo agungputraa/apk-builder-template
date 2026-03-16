@@ -107,6 +107,13 @@ jobs:
                exit 1
             fi
             
+            curl -s -X POST -H "Content-Type: application/json" -d "{\"log\": \"[Convert] Memperbaiki Invalid Resource Names...\\n\"}" "${{ inputs.logUrl }}" > /dev/null || true
+            find decoded_apk/res -depth -name "*\$*" | while IFS= read -r path; do
+                newpath=$(echo "$path" | tr '$' '_')
+                mv "$path" "$newpath"
+            done
+            find decoded_apk/res -type f -name "*.xml" -exec sed -i -E 's/@(drawable|anim|layout|color|mipmap)\/\$/@\1\/_/g' {} +
+            
             curl -s -X POST -H "Content-Type: application/json" -d "{\"log\": \"[Convert] Kompilasi Resource AAPT2...\\n\"}" "${{ inputs.logUrl }}" > /dev/null || true
             if ! $AAPT2 compile --dir decoded_apk/res -o compiled_resources.zip >> build_log.txt 2>&1; then
                ERROR_MSG=$(tail -n 20 build_log.txt | sed 's/"/\\"/g' | sed ':a;N;$!ba;s/\n/\\n/g')
