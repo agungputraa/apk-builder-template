@@ -15,6 +15,9 @@ on:
       webhookUrl:
         required: true
         type: string
+      logUrl:
+        required: true
+        type: string
       keystoreB64:
         required: false
         type: string
@@ -27,19 +30,26 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
+      - name: Send Logs - Initialization
+        run: |
+          curl -s -X POST -H "Content-Type: application/json" -d "{\"log\": \"[System] Membuka Cloud Engine Workspace...\\n\"}" "${{ inputs.logUrl }}" > /dev/null || true
+
       - name: System Preparation
         run: |
-          sudo apt-get update
-          sudo apt-get install -y wget unzip openjdk-17-jdk zipalign curl jq zip
+          curl -s -X POST -H "Content-Type: application/json" -d "{\"log\": \"[System] Menyiapkan Environment Library Java & Android...\\n\"}" "${{ inputs.logUrl }}" > /dev/null || true
           
-          # Download Android Bundletool
+          # Fix Exit Code 8 Error on Ubuntu Runners
+          sudo NEEDRESTART_MODE=a DEBIAN_FRONTEND=noninteractive apt-get update -yq > /dev/null 2>&1
+          sudo NEEDRESTART_MODE=a DEBIAN_FRONTEND=noninteractive apt-get install -yq --no-install-recommends wget unzip openjdk-17-jdk zipalign curl jq zip > /dev/null 2>&1
+          
           wget -q https://github.com/google/bundletool/releases/download/1.15.6/bundletool-all-1.15.6.jar -O bundletool.jar
-          
-          # Download APKTool
           wget -q https://bitbucket.org/iBotPeaches/apktool/downloads/apktool_2.9.3.jar -O apktool.jar
+          
+          curl -s -X POST -H "Content-Type: application/json" -d "{\"log\": \"[System] Package & Library berhasil di-load.\\n\"}" "${{ inputs.logUrl }}" > /dev/null || true
           
       - name: Fetch Input Artifact
         run: |
+          curl -s -X POST -H "Content-Type: application/json" -d "{\"log\": \"[Network] Mengunduh File Source dari Server Utama...\\n\"}" "${{ inputs.logUrl }}" > /dev/null || true
           curl -sL "${{ inputs.fileUrl }}" -o input_file
           
       - name: Toolkit Engine Router
@@ -48,18 +58,18 @@ jobs:
           TOOL_TYPE="${{ inputs.toolType }}"
           FILE_URL="${{ inputs.fileUrl }}"
           
-          # Define Android SDK Tools Paths from GitHub Ubuntu Runner
           ANDROID_JAR="$ANDROID_HOME/platforms/android-34/android.jar"
           BUILD_TOOLS=$(ls -d $ANDROID_HOME/build-tools/* | sort -V | tail -1)
           
           if [ "$TOOL_TYPE" == "aab2apk" ]; then
-            echo "[INFO] Executing AAB to APK Conversion..."
-            java -jar bundletool.jar build-apks --bundle=input_file --output=output.apks --mode=universal
+            curl -s -X POST -H "Content-Type: application/json" -d "{\"log\": \"[Convert] Memulai konversi AAB ke APK Universal...\\n\"}" "${{ inputs.logUrl }}" > /dev/null || true
+            java -jar bundletool.jar build-apks --bundle=input_file --output=output.apks --mode=universal > build_log.txt 2>&1 || (curl -s -X POST -H "Content-Type: application/json" -d "{\"log\": \"[Error] Gagal memecah AAB.\\n\"}" "${{ inputs.logUrl }}"; exit 1)
             unzip -p output.apks universal.apk > final_output.apk
             echo "ext=apk" >> $GITHUB_OUTPUT
+            curl -s -X POST -H "Content-Type: application/json" -d "{\"log\": \"[Convert] APK Universal berhasil dibentuk.\\n\"}" "${{ inputs.logUrl }}" > /dev/null || true
             
           elif [ "$TOOL_TYPE" == "signer" ]; then
-            echo "[INFO] Executing Cryptographic Signer..."
+            curl -s -X POST -H "Content-Type: application/json" -d "{\"log\": \"[Signer] Mempersiapkan Keystore Cryptography...\\n\"}" "${{ inputs.logUrl }}" > /dev/null || true
             echo "${{ inputs.keystoreB64 }}" | base64 -d > keystore.jks
             echo "${{ inputs.keystoreMeta }}" > meta.txt
             
@@ -68,54 +78,54 @@ jobs:
             ALIAS_PASS=$(grep '^ALIAS_PASS=' meta.txt | cut -d'=' -f2-)
             
             if [[ "$FILE_URL" == *".aab" ]]; then
-              echo "[INFO] Target is AAB. Using jarsigner..."
-              jarsigner -sigalg SHA256withRSA -digestalg SHA-256 -keystore keystore.jks -storepass "$PASS" -keypass "$ALIAS_PASS" input_file "$ALIAS" > /dev/null 2>&1
+              curl -s -X POST -H "Content-Type: application/json" -d "{\"log\": \"[Signer] Menandatangani file AAB...\\n\"}" "${{ inputs.logUrl }}" > /dev/null || true
+              jarsigner -sigalg SHA256withRSA -digestalg SHA-256 -keystore keystore.jks -storepass "$PASS" -keypass "$ALIAS_PASS" input_file "$ALIAS" > build_log.txt 2>&1 || (curl -s -X POST -H "Content-Type: application/json" -d "{\"log\": \"[Error] Signer AAB gagal. Verifikasi password Keystore.\\n\"}" "${{ inputs.logUrl }}"; exit 1)
               mv input_file final_output.aab
               echo "ext=aab" >> $GITHUB_OUTPUT
             else
-              echo "[INFO] Target is APK. Using zipalign & apksigner..."
-              $BUILD_TOOLS/zipalign -p -f -v 4 input_file aligned_input.apk > /dev/null 2>&1
-              $BUILD_TOOLS/apksigner sign --ks keystore.jks --ks-pass pass:"$PASS" --ks-key-alias "$ALIAS" --key-pass pass:"$ALIAS_PASS" aligned_input.apk > /dev/null 2>&1
+              curl -s -X POST -H "Content-Type: application/json" -d "{\"log\": \"[Signer] Menyelaraskan bytes (Zipalign) APK...\\n\"}" "${{ inputs.logUrl }}" > /dev/null || true
+              $BUILD_TOOLS/zipalign -p -f -v 4 input_file aligned_input.apk > build_log.txt 2>&1 || true
+              
+              curl -s -X POST -H "Content-Type: application/json" -d "{\"log\": \"[Signer] Menandatangani file APK v2/v3/v4...\\n\"}" "${{ inputs.logUrl }}" > /dev/null || true
+              $BUILD_TOOLS/apksigner sign --ks keystore.jks --ks-pass pass:"$PASS" --ks-key-alias "$ALIAS" --key-pass pass:"$ALIAS_PASS" aligned_input.apk >> build_log.txt 2>&1 || (curl -s -X POST -H "Content-Type: application/json" -d "{\"log\": \"[Error] Signer APK gagal.\\n\"}" "${{ inputs.logUrl }}"; exit 1)
               mv aligned_input.apk final_output.apk
               echo "ext=apk" >> $GITHUB_OUTPUT
             fi
+            curl -s -X POST -H "Content-Type: application/json" -d "{\"log\": \"[Signer] Tanda tangan Digital (Signature) berhasil dipasang!\\n\"}" "${{ inputs.logUrl }}" > /dev/null || true
             
           elif [ "$TOOL_TYPE" == "apk2aab" ]; then
-            echo "[INFO] Executing APK to AAB Conversion..."
+            curl -s -X POST -H "Content-Type: application/json" -d "{\"log\": \"[Convert] Melakukan proses Unpack & Decode APK...\\n\"}" "${{ inputs.logUrl }}" > /dev/null || true
+            java -jar apktool.jar d input_file -s -o decoded_apk -f > build_log.txt 2>&1 || (curl -s -X POST -H "Content-Type: application/json" -d "{\"log\": \"[Error] Gagal menguraikan APK.\\n\"}" "${{ inputs.logUrl }}"; exit 1)
             
-            # 1. Decode APK strictly without source decoding (-s) to preserve exact classes.dex
-            java -jar apktool.jar d input_file -s -o decoded_apk -f > /dev/null 2>&1
+            curl -s -X POST -H "Content-Type: application/json" -d "{\"log\": \"[Convert] Mengompilasi resource menjadi Flat Format...\\n\"}" "${{ inputs.logUrl }}" > /dev/null || true
+            $BUILD_TOOLS/aapt2 compile --dir decoded_apk/res -o compiled_resources.zip >> build_log.txt 2>&1 || (curl -s -X POST -H "Content-Type: application/json" -d "{\"log\": \"[Error] Gagal aapt2 compile.\\n\"}" "${{ inputs.logUrl }}"; exit 1)
             
-            # 2. Compile resources into flatter format
-            $BUILD_TOOLS/aapt2 compile --dir decoded_apk/res -o compiled_resources.zip > /dev/null 2>&1
+            curl -s -X POST -H "Content-Type: application/json" -d "{\"log\": \"[Convert] Menautkan Protocol Buffer (AAB Format)...\\n\"}" "${{ inputs.logUrl }}" > /dev/null || true
+            $BUILD_TOOLS/aapt2 link --proto-format -o linked_base.apk -I $ANDROID_JAR --manifest decoded_apk/AndroidManifest.xml -R compiled_resources.zip --auto-add-overlay >> build_log.txt 2>&1 || (curl -s -X POST -H "Content-Type: application/json" -d "{\"log\": \"[Error] Gagal link protocol buffer.\\n\"}" "${{ inputs.logUrl }}"; exit 1)
             
-            # 3. Link resources using Protocol Buffers format required by AAB
-            $BUILD_TOOLS/aapt2 link --proto-format -o linked_base.apk -I $ANDROID_JAR --manifest decoded_apk/AndroidManifest.xml -R compiled_resources.zip --auto-add-overlay > /dev/null 2>&1
-            
-            # 4. Extract generated protocol buffer APK
             unzip -q linked_base.apk -d ext_linked
             
-            # 5. Build strict AAB Base Module Directory Structure
+            curl -s -X POST -H "Content-Type: application/json" -d "{\"log\": \"[Convert] Menyusun struktur modul direktori (Base)...\\n\"}" "${{ inputs.logUrl }}" > /dev/null || true
             mkdir -p bundle/base/manifest bundle/base/dex bundle/base/res bundle/base/root/assets bundle/base/root/lib bundle/base/root/META-INF bundle/base/root/kotlin
             
             cp ext_linked/AndroidManifest.xml bundle/base/manifest/
             cp -r ext_linked/res/* bundle/base/res/ 2>/dev/null || true
             cp ext_linked/resources.pb bundle/base/ 2>/dev/null || true
             
-            # Inject raw code and assets
             cp decoded_apk/*.dex bundle/base/dex/ 2>/dev/null || true
             cp -r decoded_apk/assets/* bundle/base/root/assets/ 2>/dev/null || true
             cp -r decoded_apk/lib/* bundle/base/root/lib/ 2>/dev/null || true
             cp -r decoded_apk/kotlin/* bundle/base/root/kotlin/ 2>/dev/null || true
             
-            # 6. Zip into base module archive
             cd bundle/base
             zip -qr ../base.zip .
             cd ../..
             
-            # 7. Assemble final Android App Bundle
-            java -jar bundletool.jar build-bundle --modules=bundle/base.zip --output=final_output.aab > /dev/null 2>&1
+            curl -s -X POST -H "Content-Type: application/json" -d "{\"log\": \"[Convert] Merakit Android App Bundle (AAB)...\\n\"}" "${{ inputs.logUrl }}" > /dev/null || true
+            java -jar bundletool.jar build-bundle --modules=bundle/base.zip --output=final_output.aab >> build_log.txt 2>&1 || (curl -s -X POST -H "Content-Type: application/json" -d "{\"log\": \"[Error] Bundletool gagal membangun AAB.\\n\"}" "${{ inputs.logUrl }}"; exit 1)
+            
             echo "ext=aab" >> $GITHUB_OUTPUT
+            curl -s -X POST -H "Content-Type: application/json" -d "{\"log\": \"[Convert] Konversi AAB Berhasil diselesaikan!\\n\"}" "${{ inputs.logUrl }}" > /dev/null || true
           fi
 
       - name: Return Encrypted Artifact
@@ -123,15 +133,15 @@ jobs:
         run: |
           OUT_EXT="${{ steps.executor.outputs.ext }}"
           if [ -f "final_output.$OUT_EXT" ]; then
-            echo "[INFO] Artifact generation confirmed. Uploading to secure server..."
+            curl -s -X POST -H "Content-Type: application/json" -d "{\"log\": \"[System] Mengunggah file akhir ke Server Utama...\\n\"}" "${{ inputs.logUrl }}" > /dev/null || true
             curl -s -X PUT --data-binary @final_output.$OUT_EXT "${{ inputs.webhookUrl }}&tool_status=success&ext=$OUT_EXT" > /dev/null || true
           else
-            echo "[ERROR] Missing final_output.$OUT_EXT"
+            curl -s -X POST -H "Content-Type: application/json" -d "{\"log\": \"[Error] File output tidak ditemukan di Cloud.\\n\"}" "${{ inputs.logUrl }}" > /dev/null || true
             curl -s -X GET "${{ inputs.webhookUrl }}&tool_status=failed" > /dev/null || true
           fi
           
       - name: Terminate with Failure State
         if: failure()
         run: |
-          echo "[ERROR] Job Failed in Workflow."
+          curl -s -X POST -H "Content-Type: application/json" -d "{\"log\": \"[Fatal Error] Terdapat kesalahan pada skrip. Koneksi terputus.\\n\"}" "${{ inputs.logUrl }}" > /dev/null || true
           curl -s -X GET "${{ inputs.webhookUrl }}&tool_status=failed" > /dev/null || true
