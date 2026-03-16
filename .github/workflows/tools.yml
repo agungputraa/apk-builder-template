@@ -3,27 +3,16 @@ name: Developer Toolkit Engine
 on:
   workflow_dispatch:
     inputs:
-      id:
-        required: true
-        type: string
-      toolType:
-        required: true
-        type: string
-      fileUrl:
-        required: true
-        type: string
-      webhookUrl:
-        required: true
-        type: string
-      logUrl:
-        required: true
-        type: string
-      keystoreB64:
-        required: false
-        type: string
-      keystoreMeta:
-        required: false
-        type: string
+      id: { required: true, type: string }
+      toolType: { required: true, type: string }
+      fileUrl: { required: true, type: string }
+      webhookUrl: { required: true, type: string }
+      logUrl: { required: true, type: string }
+      keystoreB64: { required: false, type: string }
+      keystoreMeta: { required: false, type: string }
+
+permissions:
+  contents: write
 
 jobs:
   process_tool:
@@ -31,33 +20,54 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/setup-java@v4
-        with:
-          distribution: 'zulu'
-          java-version: '17'
+        with: { distribution: 'zulu', java-version: '21' }
 
-      - name: Prepare
+      - name: Initialization & Setup
         run: |
           curl -s -X POST -H "Content-Type: application/json" -d "{\"log\": \"[System] Menginisiasi Cloud Engine Workspace...\\n\"}" "${{ inputs.logUrl }}" > /dev/null || true
+          
+          # Hapus intervensi auto-restart pada ubuntu-latest
+          sudo NEEDRESTART_MODE=a DEBIAN_FRONTEND=noninteractive apt-get update -yq > /dev/null 2>&1
+          sudo NEEDRESTART_MODE=a DEBIAN_FRONTEND=noninteractive apt-get install -yq --no-install-recommends wget unzip zipalign curl jq zip > /dev/null 2>&1
+          
           wget -q https://github.com/google/bundletool/releases/download/1.15.6/bundletool-all-1.15.6.jar -O bundletool.jar
           wget -q https://github.com/iBotPeaches/Apktool/releases/download/v2.9.3/apktool_2.9.3.jar -O apktool.jar
-          curl -s -X POST -H "Content-Type: application/json" -d "{\"log\": \"[System] Dependency berhasil diunduh.\\n\"}" "${{ inputs.logUrl }}" > /dev/null || true
+          
+          # Paksa Android SDK Tools versi 34 untuk memastikan kompabilitas AAPT2
+          echo "y" | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager "platforms;android-34" "build-tools;34.0.0" > /dev/null 2>&1
+          
+          curl -s -X POST -H "Content-Type: application/json" -d "{\"log\": \"[System] Dependency berhasil disiapkan.\\n\"}" "${{ inputs.logUrl }}" > /dev/null || true
 
-      - name: Fetch
+      - name: Fetch Target File
         run: |
-          curl -s -X POST -H "Content-Type: application/json" -d "{\"log\": \"[Network] Mengunduh file sumber...\\n\"}" "${{ inputs.logUrl }}" > /dev/null || true
+          curl -s -X POST -H "Content-Type: application/json" -d "{\"log\": \"[Network] Mengunduh file target dari Server...\\n\"}" "${{ inputs.logUrl }}" > /dev/null || true
           curl -sL "${{ inputs.fileUrl }}" -o input_file
+          
+          # Validasi apakah file APK/AAB valid (bukan HTML Cloudflare)
+          if ! unzip -t input_file > /dev/null 2>&1; then
+            curl -s -X POST -H "Content-Type: application/json" -d "{\"log\": \"[Error] File rusak atau bukan APK/AAB valid (Periksa limit/firewall).\\n\"}" "${{ inputs.logUrl }}" > /dev/null || true
+            exit 1
+          fi
+          
+          curl -s -X POST -H "Content-Type: application/json" -d "{\"log\": \"[Network] File berhasil diunduh dan tervalidasi.\\n\"}" "${{ inputs.logUrl }}" > /dev/null || true
 
-      - name: Execute
+      - name: Execute Toolkit Engine
         id: executor
         run: |
           TOOL_TYPE="${{ inputs.toolType }}"
           FILE_URL="${{ inputs.fileUrl }}"
           ANDROID_JAR="$ANDROID_HOME/platforms/android-34/android.jar"
-          BUILD_TOOLS=$(ls -d $ANDROID_HOME/build-tools/* | sort -V | tail -1)
+          BUILD_TOOLS="$ANDROID_HOME/build-tools/34.0.0"
           
           if [ "$TOOL_TYPE" == "aab2apk" ]; then
             curl -s -X POST -H "Content-Type: application/json" -d "{\"log\": \"[Convert] Mengonversi AAB ke APK Universal...\\n\"}" "${{ inputs.logUrl }}" > /dev/null || true
-            java -jar bundletool.jar build-apks --bundle=input_file --output=output.apks --mode=universal > build_log.txt 2>&1 || (curl -s -X POST -H "Content-Type: application/json" -d "{\"log\": \"[Error] Konversi gagal.\\n\"}" "${{ inputs.logUrl }}"; exit 1)
+            
+            if ! java -jar bundletool.jar build-apks --bundle=input_file --output=output.apks --mode=universal > build_log.txt 2>&1; then
+               ERR=$(tail -n 10 build_log.txt | sed 's/"/\\"/g' | sed ':a;N;$!ba;s/\n/\\n/g')
+               curl -s -X POST -H "Content-Type: application/json" -d "{\"log\": \"[Error] Bundletool gagal:\\n$ERR\\n\"}" "${{ inputs.logUrl }}"
+               exit 1
+            fi
+            
             unzip -p output.apks universal.apk > final_output.apk
             echo "ext=apk" >> $GITHUB_OUTPUT
             
@@ -70,22 +80,49 @@ jobs:
             ALIAS_PASS=$(grep '^ALIAS_PASS=' meta.txt | cut -d'=' -f2-)
             
             if [[ "$FILE_URL" == *".aab" ]]; then
-              jarsigner -sigalg SHA256withRSA -digestalg SHA-256 -keystore keystore.jks -storepass "$PASS" -keypass "$ALIAS_PASS" input_file "$ALIAS" > build_log.txt 2>&1 || (curl -s -X POST -H "Content-Type: application/json" -d "{\"log\": \"[Error] Sign AAB gagal.\\n\"}" "${{ inputs.logUrl }}"; exit 1)
+              curl -s -X POST -H "Content-Type: application/json" -d "{\"log\": \"[Signer] Menandatangani file AAB...\\n\"}" "${{ inputs.logUrl }}" > /dev/null || true
+              if ! jarsigner -sigalg SHA256withRSA -digestalg SHA-256 -keystore keystore.jks -storepass "$PASS" -keypass "$ALIAS_PASS" input_file "$ALIAS" > build_log.txt 2>&1; then
+                 ERR=$(tail -n 10 build_log.txt | sed 's/"/\\"/g' | sed ':a;N;$!ba;s/\n/\\n/g')
+                 curl -s -X POST -H "Content-Type: application/json" -d "{\"log\": \"[Error] Jarsigner gagal:\\n$ERR\\n\"}" "${{ inputs.logUrl }}"
+                 exit 1
+              fi
               mv input_file final_output.aab
               echo "ext=aab" >> $GITHUB_OUTPUT
             else
-              $BUILD_TOOLS/zipalign -p -f -v 4 input_file aligned_input.apk > build_log.txt 2>&1 || true
-              $BUILD_TOOLS/apksigner sign --ks keystore.jks --ks-pass pass:"$PASS" --ks-key-alias "$ALIAS" --key-pass pass:"$ALIAS_PASS" aligned_input.apk >> build_log.txt 2>&1 || (curl -s -X POST -H "Content-Type: application/json" -d "{\"log\": \"[Error] Sign APK gagal.\\n\"}" "${{ inputs.logUrl }}"; exit 1)
+              curl -s -X POST -H "Content-Type: application/json" -d "{\"log\": \"[Signer] Menjalankan Zipalign & Apksigner...\\n\"}" "${{ inputs.logUrl }}" > /dev/null || true
+              zipalign -p -f -v 4 input_file aligned_input.apk > build_log.txt 2>&1 || true
+              
+              if ! $BUILD_TOOLS/apksigner sign --ks keystore.jks --ks-pass pass:"$PASS" --ks-key-alias "$ALIAS" --key-pass pass:"$ALIAS_PASS" aligned_input.apk >> build_log.txt 2>&1; then
+                 ERR=$(tail -n 10 build_log.txt | sed 's/"/\\"/g' | sed ':a;N;$!ba;s/\n/\\n/g')
+                 curl -s -X POST -H "Content-Type: application/json" -d "{\"log\": \"[Error] Apksigner gagal:\\n$ERR\\n\"}" "${{ inputs.logUrl }}"
+                 exit 1
+              fi
               mv aligned_input.apk final_output.apk
               echo "ext=apk" >> $GITHUB_OUTPUT
             fi
             
           elif [ "$TOOL_TYPE" == "apk2aab" ]; then
-            curl -s -X POST -H "Content-Type: application/json" -d "{\"log\": \"[Convert] Decode APK...\\n\"}" "${{ inputs.logUrl }}" > /dev/null || true
-            java -jar apktool.jar d input_file -s -o decoded_apk -f > build_log.txt 2>&1 || (curl -s -X POST -H "Content-Type: application/json" -d "{\"log\": \"[Error] Decode APK gagal.\\n\"}" "${{ inputs.logUrl }}"; exit 1)
+            curl -s -X POST -H "Content-Type: application/json" -d "{\"log\": \"[Convert] Decode APK (Bisa memakan waktu beberapa menit)...\\n\"}" "${{ inputs.logUrl }}" > /dev/null || true
             
-            $BUILD_TOOLS/aapt2 compile --dir decoded_apk/res -o compiled_resources.zip >> build_log.txt 2>&1 || (curl -s -X POST -H "Content-Type: application/json" -d "{\"log\": \"[Error] Gagal aapt2 compile.\\n\"}" "${{ inputs.logUrl }}"; exit 1)
-            $BUILD_TOOLS/aapt2 link --proto-format -o linked_base.apk -I $ANDROID_JAR --manifest decoded_apk/AndroidManifest.xml -R compiled_resources.zip --auto-add-overlay >> build_log.txt 2>&1 || (curl -s -X POST -H "Content-Type: application/json" -d "{\"log\": \"[Error] Gagal aapt2 link.\\n\"}" "${{ inputs.logUrl }}"; exit 1)
+            if ! java -jar apktool.jar d input_file -s -o decoded_apk -f > build_log.txt 2>&1; then
+               ERR=$(tail -n 10 build_log.txt | sed 's/"/\\"/g' | sed ':a;N;$!ba;s/\n/\\n/g')
+               curl -s -X POST -H "Content-Type: application/json" -d "{\"log\": \"[Error] Apktool Decode gagal:\\n$ERR\\n\"}" "${{ inputs.logUrl }}"
+               exit 1
+            fi
+            
+            curl -s -X POST -H "Content-Type: application/json" -d "{\"log\": \"[Convert] Kompilasi Resource AAPT2...\\n\"}" "${{ inputs.logUrl }}" > /dev/null || true
+            if ! $BUILD_TOOLS/aapt2 compile --dir decoded_apk/res -o compiled_resources.zip >> build_log.txt 2>&1; then
+               ERR=$(tail -n 10 build_log.txt | sed 's/"/\\"/g' | sed ':a;N;$!ba;s/\n/\\n/g')
+               curl -s -X POST -H "Content-Type: application/json" -d "{\"log\": \"[Error] AAPT2 Compile gagal:\\n$ERR\\n\"}" "${{ inputs.logUrl }}"
+               exit 1
+            fi
+            
+            curl -s -X POST -H "Content-Type: application/json" -d "{\"log\": \"[Convert] Linking Protocol Buffer...\\n\"}" "${{ inputs.logUrl }}" > /dev/null || true
+            if ! $BUILD_TOOLS/aapt2 link --proto-format -o linked_base.apk -I $ANDROID_JAR --manifest decoded_apk/AndroidManifest.xml -R compiled_resources.zip --auto-add-overlay >> build_log.txt 2>&1; then
+               ERR=$(tail -n 10 build_log.txt | sed 's/"/\\"/g' | sed ':a;N;$!ba;s/\n/\\n/g')
+               curl -s -X POST -H "Content-Type: application/json" -d "{\"log\": \"[Error] AAPT2 Link gagal:\\n$ERR\\n\"}" "${{ inputs.logUrl }}"
+               exit 1
+            fi
             
             unzip -q linked_base.apk -d ext_linked
             mkdir -p bundle/base/manifest bundle/base/dex bundle/base/res bundle/base/root/assets bundle/base/root/lib bundle/base/root/META-INF bundle/base/root/kotlin
@@ -102,11 +139,16 @@ jobs:
             zip -qr ../base.zip .
             cd ../..
             
-            java -jar bundletool.jar build-bundle --modules=bundle/base.zip --output=final_output.aab >> build_log.txt 2>&1 || (curl -s -X POST -H "Content-Type: application/json" -d "{\"log\": \"[Error] Bundletool gagal.\\n\"}" "${{ inputs.logUrl }}"; exit 1)
+            curl -s -X POST -H "Content-Type: application/json" -d "{\"log\": \"[Convert] Membangun AAB dengan Bundletool...\\n\"}" "${{ inputs.logUrl }}" > /dev/null || true
+            if ! java -jar bundletool.jar build-bundle --modules=bundle/base.zip --output=final_output.aab >> build_log.txt 2>&1; then
+               ERR=$(tail -n 10 build_log.txt | sed 's/"/\\"/g' | sed ':a;N;$!ba;s/\n/\\n/g')
+               curl -s -X POST -H "Content-Type: application/json" -d "{\"log\": \"[Error] Bundletool gagal:\\n$ERR\\n\"}" "${{ inputs.logUrl }}"
+               exit 1
+            fi
             echo "ext=aab" >> $GITHUB_OUTPUT
           fi
 
-      - name: Deliver
+      - name: Deliver Result
         if: success()
         run: |
           OUT_EXT="${{ steps.executor.outputs.ext }}"
@@ -114,6 +156,7 @@ jobs:
             curl -s -X POST -H "Content-Type: application/json" -d "{\"log\": \"[System] Mengirim file ke server...\\n\"}" "${{ inputs.logUrl }}" > /dev/null || true
             curl -s -X PUT --data-binary @final_output.$OUT_EXT "${{ inputs.webhookUrl }}&tool_status=success&ext=$OUT_EXT" > /dev/null || true
           else
+            curl -s -X POST -H "Content-Type: application/json" -d "{\"log\": \"[Error] File output tidak ditemukan.\\n\"}" "${{ inputs.logUrl }}" > /dev/null || true
             curl -s -X GET "${{ inputs.webhookUrl }}&tool_status=failed" > /dev/null || true
           fi
           
