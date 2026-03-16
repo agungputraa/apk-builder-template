@@ -1,6 +1,6 @@
 name: Developer Toolkit Engine
 
-run-name: Toolkit Job [${{ inputs.toolType }}] - ${{ inputs.id }}
+run-name: Tool Job - ${{ inputs.id }} (${{ inputs.toolType }})
 
 on:
   workflow_dispatch:
@@ -26,49 +26,47 @@ jobs:
 
       - name: Initialization & Setup
         run: |
-          log_server() { jq -n --arg log "$1" '{"log": $log}' | curl -s -X POST -H "Content-Type: application/json" -d @- "${{ inputs.logUrl }}" > /dev/null || true; }
-          log_server "[System] Menginisiasi Cloud Engine Workspace...\n"
+          jq -n --arg log "[System] Menginisiasi Cloud Engine Workspace...\n" '{"log": $log}' | curl -s -X POST -H "Content-Type: application/json" -d @- "${{ inputs.logUrl }}" > /dev/null || true
           
+          # Hapus intervensi auto-restart pada ubuntu-latest
           sudo NEEDRESTART_MODE=a DEBIAN_FRONTEND=noninteractive apt-get update -yq > /dev/null 2>&1
           sudo NEEDRESTART_MODE=a DEBIAN_FRONTEND=noninteractive apt-get install -yq --no-install-recommends wget unzip zipalign curl jq zip > /dev/null 2>&1
           
           wget -q https://github.com/google/bundletool/releases/download/1.15.6/bundletool-all-1.15.6.jar -O bundletool.jar
           wget -q https://bitbucket.org/iBotPeaches/apktool/downloads/apktool_2.9.3.jar -O apktool.jar
           
+          # Paksa Android SDK Tools versi 34 untuk memastikan kompabilitas AAPT2
           echo "y" | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager "platforms;android-34" "build-tools;34.0.0" > /dev/null 2>&1
           
-          log_server "[System] Dependency Android SDK & Library berhasil disiapkan.\n"
+          jq -n --arg log "[System] Dependency berhasil disiapkan.\n" '{"log": $log}' | curl -s -X POST -H "Content-Type: application/json" -d @- "${{ inputs.logUrl }}" > /dev/null || true
 
       - name: Fetch Target File
         run: |
-          log_server() { jq -n --arg log "$1" '{"log": $log}' | curl -s -X POST -H "Content-Type: application/json" -d @- "${{ inputs.logUrl }}" > /dev/null || true; }
-          log_server "[Network] Mengunduh file target dari Server Utama...\n"
-          
+          jq -n --arg log "[Network] Mengunduh file target dari Server...\n" '{"log": $log}' | curl -s -X POST -H "Content-Type: application/json" -d @- "${{ inputs.logUrl }}" > /dev/null || true
           curl -sL "${{ inputs.fileUrl }}" -o input_file
           
+          # Validasi apakah file APK/AAB valid (bukan HTML Cloudflare/Corrupt)
           if ! unzip -t input_file > /dev/null 2>&1; then
-            log_server "[Error] File rusak atau bukan format APK/AAB yang valid (Periksa koneksi/firewall server).\n"
+            jq -n --arg log "[Error] File rusak atau bukan APK/AAB valid (Periksa limit/firewall).\n" '{"log": $log}' | curl -s -X POST -H "Content-Type: application/json" -d @- "${{ inputs.logUrl }}" > /dev/null || true
             exit 1
           fi
           
-          log_server "[Network] File berhasil diunduh dan tervalidasi (Bebas Corrupt).\n"
+          jq -n --arg log "[Network] File berhasil diunduh dan tervalidasi.\n" '{"log": $log}' | curl -s -X POST -H "Content-Type: application/json" -d @- "${{ inputs.logUrl }}" > /dev/null || true
 
       - name: Execute Toolkit Engine
         id: executor
         run: |
-          log_server() { jq -n --arg log "$1" '{"log": $log}' | curl -s -X POST -H "Content-Type: application/json" -d @- "${{ inputs.logUrl }}" > /dev/null || true; }
-          
           TOOL_TYPE="${{ inputs.toolType }}"
           FILE_URL="${{ inputs.fileUrl }}"
           ANDROID_JAR="$ANDROID_HOME/platforms/android-34/android.jar"
           BUILD_TOOLS="$ANDROID_HOME/build-tools/34.0.0"
           
           if [ "$TOOL_TYPE" == "aab2apk" ]; then
-            log_server "[Convert] Mengonversi AAB ke APK Universal...\n"
+            jq -n --arg log "[Convert] Mengonversi AAB ke APK Universal...\n" '{"log": $log}' | curl -s -X POST -H "Content-Type: application/json" -d @- "${{ inputs.logUrl }}" > /dev/null || true
             
             if ! java -jar bundletool.jar build-apks --bundle=input_file --output=output.apks --mode=universal > build_log.txt 2>&1; then
-               ERR=$(tail -n 15 build_log.txt)
-               log_server "[Error] Bundletool gagal mengeksekusi file:\n$ERR\n"
+               ERR=$(tail -n 15 build_log.txt || echo "Unknown Error")
+               jq -n --arg log "[Error] Bundletool gagal:\n$ERR\n" '{"log": $log}' | curl -s -X POST -H "Content-Type: application/json" -d @- "${{ inputs.logUrl }}"
                exit 1
             fi
             
@@ -76,7 +74,7 @@ jobs:
             echo "ext=apk" >> $GITHUB_OUTPUT
             
           elif [ "$TOOL_TYPE" == "signer" ]; then
-            log_server "[Signer] Mempersiapkan Keystore Cryptography...\n"
+            jq -n --arg log "[Signer] Mempersiapkan Keystore...\n" '{"log": $log}' | curl -s -X POST -H "Content-Type: application/json" -d @- "${{ inputs.logUrl }}" > /dev/null || true
             echo "${{ inputs.keystoreB64 }}" | base64 -d > keystore.jks
             echo "${{ inputs.keystoreMeta }}" > meta.txt
             ALIAS=$(grep '^ALIAS=' meta.txt | cut -d'=' -f2-)
@@ -84,22 +82,21 @@ jobs:
             ALIAS_PASS=$(grep '^ALIAS_PASS=' meta.txt | cut -d'=' -f2-)
             
             if [[ "$FILE_URL" == *".aab" ]]; then
-              log_server "[Signer] Menandatangani file AAB...\n"
+              jq -n --arg log "[Signer] Menandatangani file AAB...\n" '{"log": $log}' | curl -s -X POST -H "Content-Type: application/json" -d @- "${{ inputs.logUrl }}" > /dev/null || true
               if ! jarsigner -sigalg SHA256withRSA -digestalg SHA-256 -keystore keystore.jks -storepass "$PASS" -keypass "$ALIAS_PASS" input_file "$ALIAS" > build_log.txt 2>&1; then
-                 ERR=$(tail -n 15 build_log.txt)
-                 log_server "[Error] Jarsigner menolak keystore/alias:\n$ERR\n"
+                 ERR=$(tail -n 15 build_log.txt || echo "Unknown Error")
+                 jq -n --arg log "[Error] Jarsigner gagal:\n$ERR\n" '{"log": $log}' | curl -s -X POST -H "Content-Type: application/json" -d @- "${{ inputs.logUrl }}"
                  exit 1
               fi
               mv input_file final_output.aab
               echo "ext=aab" >> $GITHUB_OUTPUT
             else
-              log_server "[Signer] Menjalankan Zipalign untuk merapikan bytes...\n"
+              jq -n --arg log "[Signer] Menjalankan Zipalign & Apksigner...\n" '{"log": $log}' | curl -s -X POST -H "Content-Type: application/json" -d @- "${{ inputs.logUrl }}" > /dev/null || true
               zipalign -p -f -v 4 input_file aligned_input.apk > build_log.txt 2>&1 || true
               
-              log_server "[Signer] Menginjeksi Signature ke APK...\n"
               if ! $BUILD_TOOLS/apksigner sign --ks keystore.jks --ks-pass pass:"$PASS" --ks-key-alias "$ALIAS" --key-pass pass:"$ALIAS_PASS" aligned_input.apk >> build_log.txt 2>&1; then
-                 ERR=$(tail -n 15 build_log.txt)
-                 log_server "[Error] Apksigner gagal (Periksa password Keystore):\n$ERR\n"
+                 ERR=$(tail -n 15 build_log.txt || echo "Unknown Error")
+                 jq -n --arg log "[Error] Apksigner gagal:\n$ERR\n" '{"log": $log}' | curl -s -X POST -H "Content-Type: application/json" -d @- "${{ inputs.logUrl }}"
                  exit 1
               fi
               mv aligned_input.apk final_output.apk
@@ -107,24 +104,25 @@ jobs:
             fi
             
           elif [ "$TOOL_TYPE" == "apk2aab" ]; then
-            log_server "[Convert] Menguraikan (Decode) Source Code APK (Tunggu Sebentar)...\n"
+            jq -n --arg log "[Convert] Decode APK (Bisa memakan waktu beberapa menit)...\n" '{"log": $log}' | curl -s -X POST -H "Content-Type: application/json" -d @- "${{ inputs.logUrl }}" > /dev/null || true
+            
             if ! java -jar apktool.jar d input_file -s -o decoded_apk -f > build_log.txt 2>&1; then
-               ERR=$(tail -n 15 build_log.txt)
-               log_server "[Error] Apktool gagal menguraikan file:\n$ERR\n"
+               ERR=$(tail -n 15 build_log.txt || echo "Unknown Error")
+               jq -n --arg log "[Error] Apktool Decode gagal:\n$ERR\n" '{"log": $log}' | curl -s -X POST -H "Content-Type: application/json" -d @- "${{ inputs.logUrl }}"
                exit 1
             fi
             
-            log_server "[Convert] Mengompilasi Resource menjadi Flat Format...\n"
+            jq -n --arg log "[Convert] Kompilasi Resource AAPT2...\n" '{"log": $log}' | curl -s -X POST -H "Content-Type: application/json" -d @- "${{ inputs.logUrl }}" > /dev/null || true
             if ! $BUILD_TOOLS/aapt2 compile --dir decoded_apk/res -o compiled_resources.zip >> build_log.txt 2>&1; then
-               ERR=$(tail -n 15 build_log.txt)
-               log_server "[Error] AAPT2 gagal melakukan compile res:\n$ERR\n"
+               ERR=$(tail -n 15 build_log.txt || echo "Unknown Error")
+               jq -n --arg log "[Error] AAPT2 Compile gagal:\n$ERR\n" '{"log": $log}' | curl -s -X POST -H "Content-Type: application/json" -d @- "${{ inputs.logUrl }}"
                exit 1
             fi
             
-            log_server "[Convert] Menautkan Protocol Buffer ke Blueprint...\n"
+            jq -n --arg log "[Convert] Linking Protocol Buffer...\n" '{"log": $log}' | curl -s -X POST -H "Content-Type: application/json" -d @- "${{ inputs.logUrl }}" > /dev/null || true
             if ! $BUILD_TOOLS/aapt2 link --proto-format -o linked_base.apk -I $ANDROID_JAR --manifest decoded_apk/AndroidManifest.xml -R compiled_resources.zip --auto-add-overlay >> build_log.txt 2>&1; then
-               ERR=$(tail -n 15 build_log.txt)
-               log_server "[Error] AAPT2 gagal melakukan link config:\n$ERR\n"
+               ERR=$(tail -n 15 build_log.txt || echo "Unknown Error")
+               jq -n --arg log "[Error] AAPT2 Link gagal:\n$ERR\n" '{"log": $log}' | curl -s -X POST -H "Content-Type: application/json" -d @- "${{ inputs.logUrl }}"
                exit 1
             fi
             
@@ -143,10 +141,10 @@ jobs:
             zip -qr ../base.zip .
             cd ../..
             
-            log_server "[Convert] Membangun AAB Final dengan Bundletool...\n"
+            jq -n --arg log "[Convert] Membangun AAB dengan Bundletool...\n" '{"log": $log}' | curl -s -X POST -H "Content-Type: application/json" -d @- "${{ inputs.logUrl }}" > /dev/null || true
             if ! java -jar bundletool.jar build-bundle --modules=bundle/base.zip --output=final_output.aab >> build_log.txt 2>&1; then
-               ERR=$(tail -n 15 build_log.txt)
-               log_server "[Error] Bundletool gagal membangun AAB:\n$ERR\n"
+               ERR=$(tail -n 15 build_log.txt || echo "Unknown Error")
+               jq -n --arg log "[Error] Bundletool gagal:\n$ERR\n" '{"log": $log}' | curl -s -X POST -H "Content-Type: application/json" -d @- "${{ inputs.logUrl }}"
                exit 1
             fi
             echo "ext=aab" >> $GITHUB_OUTPUT
@@ -155,17 +153,16 @@ jobs:
       - name: Deliver Result
         if: success()
         run: |
-          log_server() { jq -n --arg log "$1" '{"log": $log}' | curl -s -X POST -H "Content-Type: application/json" -d @- "${{ inputs.logUrl }}" > /dev/null || true; }
           OUT_EXT="${{ steps.executor.outputs.ext }}"
           if [ -f "final_output.$OUT_EXT" ]; then
-            log_server "[System] Proses Sukses! Mengirim file kembali ke Server Utama...\n"
+            jq -n --arg log "[System] Mengirim file ke server...\n" '{"log": $log}' | curl -s -X POST -H "Content-Type: application/json" -d @- "${{ inputs.logUrl }}" > /dev/null || true
             curl -s -X PUT --data-binary @final_output.$OUT_EXT "${{ inputs.webhookUrl }}&tool_status=success&ext=$OUT_EXT" > /dev/null || true
           else
-            log_server "[Error] Proses selesai tapi file final tidak ditemukan!\n"
+            jq -n --arg log "[Error] File output tidak ditemukan.\n" '{"log": $log}' | curl -s -X POST -H "Content-Type: application/json" -d @- "${{ inputs.logUrl }}" > /dev/null || true
             curl -s -X GET "${{ inputs.webhookUrl }}&tool_status=failed" > /dev/null || true
           fi
           
-      - name: Notify Failure
+      - name: Handle Failure
         if: failure()
         run: |
           curl -s -X GET "${{ inputs.webhookUrl }}&tool_status=failed" > /dev/null || true
