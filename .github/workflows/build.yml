@@ -1,5 +1,7 @@
 name: Pro Native Compiler
+
 run-name: Enterprise Build - ${{ inputs.appName }}
+
 on:
   workflow_dispatch:
     inputs:
@@ -270,8 +272,7 @@ jobs:
              echo "            settings.setMediaPlaybackRequiresUserGesture(false);" >> "$NEW_DIR/MainActivity.java"
              
              if [ "${{ inputs.buildFormat }}" == "debug_apk" ]; then
-                 echo "            settings.setCacheMode(WebSettings.LOAD_NO_CACHE);" >> "$NEW_DIR/MainActivity.java"
-                 echo "            webView.clearCache(true);" >> "$NEW_DIR/MainActivity.java"
+                 echo "            settings.setCacheMode(WebSettings.LOAD_CACHE_ELSE_NETWORK);" >> "$NEW_DIR/MainActivity.java"
              else
                  echo "            settings.setCacheMode(WebSettings.LOAD_DEFAULT);" >> "$NEW_DIR/MainActivity.java"
              fi
@@ -284,11 +285,17 @@ jobs:
 
              # INJEKSI FAB DAN LABEL DEBUG NATIVE
              if [ "${{ inputs.buildFormat }}" == "debug_apk" ]; then
-                 echo "        android.widget.Button fab = new android.widget.Button(this);" >> "$NEW_DIR/MainActivity.java"
-                 echo "        fab.setText(\"↻ REFRESH\");" >> "$NEW_DIR/MainActivity.java"
+                 echo "        android.widget.TextView fab = new android.widget.TextView(this);" >> "$NEW_DIR/MainActivity.java"
+                 echo "        fab.setText(\"↻\");" >> "$NEW_DIR/MainActivity.java"
+                 echo "        fab.setTextSize(26f);" >> "$NEW_DIR/MainActivity.java"
                  echo "        fab.setTextColor(android.graphics.Color.WHITE);" >> "$NEW_DIR/MainActivity.java"
-                 echo "        fab.setBackgroundColor(android.graphics.Color.parseColor(\"#10b981\"));" >> "$NEW_DIR/MainActivity.java"
-                 echo "        android.widget.FrameLayout.LayoutParams params = new android.widget.FrameLayout.LayoutParams(android.view.ViewGroup.LayoutParams.WRAP_CONTENT, android.view.ViewGroup.LayoutParams.WRAP_CONTENT);" >> "$NEW_DIR/MainActivity.java"
+                 echo "        fab.setGravity(android.view.Gravity.CENTER);" >> "$NEW_DIR/MainActivity.java"
+                 echo "        android.graphics.drawable.GradientDrawable shape = new android.graphics.drawable.GradientDrawable();" >> "$NEW_DIR/MainActivity.java"
+                 echo "        shape.setShape(android.graphics.drawable.GradientDrawable.OVAL);" >> "$NEW_DIR/MainActivity.java"
+                 echo "        shape.setColor(android.graphics.Color.parseColor(\"#10b981\"));" >> "$NEW_DIR/MainActivity.java"
+                 echo "        fab.setBackground(shape);" >> "$NEW_DIR/MainActivity.java"
+                 echo "        fab.setElevation(8f);" >> "$NEW_DIR/MainActivity.java"
+                 echo "        android.widget.FrameLayout.LayoutParams params = new android.widget.FrameLayout.LayoutParams(140, 140);" >> "$NEW_DIR/MainActivity.java"
                  echo "        params.gravity = android.view.Gravity.BOTTOM | android.view.Gravity.END;" >> "$NEW_DIR/MainActivity.java"
                  echo "        params.setMargins(0, 0, 50, 50);" >> "$NEW_DIR/MainActivity.java"
                  echo "        fab.setLayoutParams(params);" >> "$NEW_DIR/MainActivity.java"
@@ -297,9 +304,11 @@ jobs:
                  echo "            public void onClick(View v) {" >> "$NEW_DIR/MainActivity.java"
                  echo "                WebView wv = bridge.getWebView();" >> "$NEW_DIR/MainActivity.java"
                  echo "                if(wv != null) {" >> "$NEW_DIR/MainActivity.java"
+                 echo "                    wv.getSettings().setCacheMode(WebSettings.LOAD_NO_CACHE);" >> "$NEW_DIR/MainActivity.java"
                  echo "                    wv.clearCache(true);" >> "$NEW_DIR/MainActivity.java"
                  echo "                    wv.reload();" >> "$NEW_DIR/MainActivity.java"
-                 echo "                    Toast.makeText(MainActivity.this, \"Refreshing...\", Toast.LENGTH_SHORT).show();" >> "$NEW_DIR/MainActivity.java"
+                 echo "                    Toast.makeText(MainActivity.this, \"Mengambil update server...\", Toast.LENGTH_SHORT).show();" >> "$NEW_DIR/MainActivity.java"
+                 echo "                    wv.postDelayed(new Runnable() { @Override public void run() { wv.getSettings().setCacheMode(WebSettings.LOAD_CACHE_ELSE_NETWORK); } }, 5000);" >> "$NEW_DIR/MainActivity.java"
                  echo "                }" >> "$NEW_DIR/MainActivity.java"
                  echo "            }" >> "$NEW_DIR/MainActivity.java"
                  echo "        });" >> "$NEW_DIR/MainActivity.java"
