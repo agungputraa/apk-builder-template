@@ -99,6 +99,13 @@ jobs:
             fi
             
           elif [ "$TOOL_TYPE" == "apk2aab" ]; then
+            curl -s -X POST -H "Content-Type: application/json" -d "{\"log\": \"[Convert] Mengekstrak Informasi Versi APK...\\n\"}" "${{ inputs.logUrl }}" > /dev/null || true
+            
+            VC=$($AAPT2 dump badging input_file | grep "package: name=" | sed -n "s/.*versionCode='\([^']*\)'.*/\1/p")
+            VN=$($AAPT2 dump badging input_file | grep "package: name=" | sed -n "s/.*versionName='\([^']*\)'.*/\1/p")
+            if [ -z "$VC" ]; then VC="1"; fi
+            if [ -z "$VN" ]; then VN="1.0"; fi
+            
             curl -s -X POST -H "Content-Type: application/json" -d "{\"log\": \"[Convert] Decode APK (Bisa memakan waktu beberapa menit)...\\n\"}" "${{ inputs.logUrl }}" > /dev/null || true
             
             if ! java -jar apktool.jar d input_file -s -o decoded_apk -f > build_log.txt 2>&1; then
@@ -107,7 +114,7 @@ jobs:
                exit 1
             fi
             
-            curl -s -X POST -H "Content-Type: application/json" -d "{\"log\": \"[Convert] Sanitize Invalid Resource Names (Material 3)...\\n\"}" "${{ inputs.logUrl }}" > /dev/null || true
+            curl -s -X POST -H "Content-Type: application/json" -d "{\"log\": \"[Convert] Sanitize Invalid Resource Names...\\n\"}" "${{ inputs.logUrl }}" > /dev/null || true
             find decoded_apk/res -depth -name "*\$*" | while IFS= read -r path; do
                 newpath=$(echo "$path" | tr '$' '_')
                 mv "$path" "$newpath"
@@ -122,8 +129,8 @@ jobs:
                exit 1
             fi
             
-            curl -s -X POST -H "Content-Type: application/json" -d "{\"log\": \"[Convert] Linking Protocol Buffer...\\n\"}" "${{ inputs.logUrl }}" > /dev/null || true
-            if ! $AAPT2 link --proto-format -o linked_base.apk -I $ANDROID_JAR --manifest decoded_apk/AndroidManifest.xml -R compiled_resources.zip --auto-add-overlay >> build_log.txt 2>&1; then
+            curl -s -X POST -H "Content-Type: application/json" -d "{\"log\": \"[Convert] Linking Protocol Buffer (v$VN / code $VC)...\\n\"}" "${{ inputs.logUrl }}" > /dev/null || true
+            if ! $AAPT2 link --proto-format -o linked_base.apk -I $ANDROID_JAR --manifest decoded_apk/AndroidManifest.xml -R compiled_resources.zip --auto-add-overlay --version-code "$VC" --version-name "$VN" >> build_log.txt 2>&1; then
                ERROR_MSG=$(tail -n 20 build_log.txt | sed 's/"/\\"/g' | sed ':a;N;$!ba;s/\n/\\n/g')
                jq -n --arg id "${{ inputs.id }}" --arg log "[Error] AAPT2 Link gagal:\n$ERROR_MSG\n" '{"log": $log}' | curl -s -X POST -H "Content-Type: application/json" -d @- "${{ inputs.logUrl }}" || true
                exit 1
