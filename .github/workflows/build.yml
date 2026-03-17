@@ -78,7 +78,7 @@ jobs:
           mkdir -p app/www
           
           if [ "${{ inputs.mode }}" == "webview" ] || [ "${{ inputs.buildFormat }}" == "debug_apk" ]; then
-            echo "<script>window.location.href='${{ inputs.url }}';</script>" > app/www/index.html
+            echo "<script>window.location.href=\"${{ inputs.url }}\";</script>" > app/www/index.html
             echo '{"name":"webview-app","version":"1.0.0","dependencies":{"@capacitor/core":"latest","@capacitor/android":"latest"},"devDependencies":{"@capacitor/cli":"latest"}}' > app/package.json
           else
             echo "$ZIP_B64" | base64 -d -i > project.zip
@@ -347,7 +347,9 @@ jobs:
              echo "}" >> "$NEW_DIR/MainActivity.java"
              
              if [ "${{ inputs.mode }}" == "webview" ] || [ "${{ inputs.buildFormat }}" == "debug_apk" ]; then
-                 WEBVIEW_HOOK="webView.setWebViewClient(new WebViewClient() { @Override public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) { String url = request.getUrl().toString(); String host = request.getUrl().getHost(); String targetUrl = \"${{ inputs.url }}\"; String targetHost = \"\"; try { targetHost = new java.net.URL(targetUrl).getHost(); } catch (Exception e) {} if (host != null \&\& targetHost != null \&\& host.contains(targetHost)) { return false; } else { Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse(url)); view.getContext().startActivity(intent); return true; } } });"
+                 SAFE_URL="${{ inputs.url }}"
+                 SAFE_URL="${SAFE_URL//&/\\&}"
+                 WEBVIEW_HOOK="webView.setWebViewClient(new WebViewClient() { @Override public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) { String url = request.getUrl().toString(); String host = request.getUrl().getHost(); String targetUrl = \"$SAFE_URL\"; String targetHost = \"\"; try { targetHost = new java.net.URL(targetUrl).getHost(); } catch (Exception e) {} if (host != null \&\& targetHost != null \&\& host.contains(targetHost)) { return false; } else { Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse(url)); view.getContext().startActivity(intent); return true; } } });"
                  sed -i "s|/\* WEBVIEW_MODE_HOOK \*/|$WEBVIEW_HOOK|g" "$NEW_DIR/MainActivity.java"
              fi
           fi
