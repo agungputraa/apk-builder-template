@@ -26,24 +26,24 @@ jobs:
 
       - name: Initialization & Setup
         run: |
-          curl -s -X POST -H "Content-Type: application/json" -d "{\"log\": \"[System] Menginisiasi Cloud Engine Workspace...\\n\"}" "${{ inputs.logUrl }}" > /dev/null || true
+          curl -s -X POST -H "Content-Type: application/json" -d "{\"log\": \"[System] Initializing Cloud Toolkit Engine cluster...\\n\"}" "${{ inputs.logUrl }}" > /dev/null || true
           
           curl -sL https://github.com/google/bundletool/releases/download/1.17.1/bundletool-all-1.17.1.jar -o bundletool.jar
           curl -sL https://github.com/iBotPeaches/Apktool/releases/download/v2.10.0/apktool_2.10.0.jar -o apktool.jar
           
-          curl -s -X POST -H "Content-Type: application/json" -d "{\"log\": \"[System] Dependency berhasil disiapkan.\\n\"}" "${{ inputs.logUrl }}" > /dev/null || true
+          curl -s -X POST -H "Content-Type: application/json" -d "{\"log\": \"[System] Deep-core toolkit dependencies successfully injected.\\n\"}" "${{ inputs.logUrl }}" > /dev/null || true
 
       - name: Fetch Target File
         run: |
-          curl -s -X POST -H "Content-Type: application/json" -d "{\"log\": \"[Network] Mengunduh file target dari Server...\\n\"}" "${{ inputs.logUrl }}" > /dev/null || true
+          curl -s -X POST -H "Content-Type: application/json" -d "{\"log\": \"[Network] Establishing secure channel to retrieve binary payload...\\n\"}" "${{ inputs.logUrl }}" > /dev/null || true
           curl -sL "${{ inputs.fileUrl }}" -o input_file
           
           if ! unzip -t input_file > /dev/null 2>&1; then
-            curl -s -X POST -H "Content-Type: application/json" -d "{\"log\": \"[Error] File rusak atau bukan APK/AAB valid.\\n\"}" "${{ inputs.logUrl }}" > /dev/null || true
+            curl -s -X POST -H "Content-Type: application/json" -d "{\"log\": \"[Halt] Invalid binary payload: Target file is corrupted or not a valid APK/AAB archive.\\n\"}" "${{ inputs.logUrl }}" > /dev/null || true
             exit 1
           fi
           
-          curl -s -X POST -H "Content-Type: application/json" -d "{\"log\": \"[Network] File berhasil diunduh dan tervalidasi.\\n\"}" "${{ inputs.logUrl }}" > /dev/null || true
+          curl -s -X POST -H "Content-Type: application/json" -d "{\"log\": \"[Network] Binary payload successfully retrieved and verified.\\n\"}" "${{ inputs.logUrl }}" > /dev/null || true
 
       - name: Execute Toolkit Engine
         id: executor
@@ -57,11 +57,11 @@ jobs:
           ANDROID_JAR=$(find $ANDROID_SDK_ROOT/platforms -name android.jar | sort -V | tail -n 1)
           
           if [ "$TOOL_TYPE" == "aab2apk" ]; then
-            curl -s -X POST -H "Content-Type: application/json" -d "{\"log\": \"[Convert] Mengonversi AAB ke APK Universal...\\n\"}" "${{ inputs.logUrl }}" > /dev/null || true
+            curl -s -X POST -H "Content-Type: application/json" -d "{\"log\": \"[Engine] Executing AAB to Universal APK transformation protocol...\\n\"}" "${{ inputs.logUrl }}" > /dev/null || true
             
             if ! java -jar bundletool.jar build-apks --bundle=input_file --output=output.apks --mode=universal > build_log.txt 2>&1; then
-               ERROR_MSG=$(tail -n 20 build_log.txt | sed 's/"/\\"/g' | sed ':a;N;$!ba;s/\n/\\n/g')
-               jq -n --arg id "${{ inputs.id }}" --arg log "[Error] Bundletool gagal:\n$ERROR_MSG\n" '{"log": $log}' | curl -s -X POST -H "Content-Type: application/json" -d @- "${{ inputs.logUrl }}" || true
+               ERROR_MSG=$(tail -n 20 build_log.txt | sed 's|/home/runner/work/[^/]*/[^/]*/|/cloud/toolkit/|g' | sed 's|/home/runner|/cloud/system|g' | sed 's/"/\\"/g' | sed ':a;N;$!ba;s/\n/\\n/g')
+               jq -n --arg id "${{ inputs.id }}" --arg log "[Engine Failure] Bundle-extraction matrix crashed:\n$ERROR_MSG\n" '{"log": $log}' | curl -s -X POST -H "Content-Type: application/json" -d @- "${{ inputs.logUrl }}" || true
                exit 1
             fi
             
@@ -69,7 +69,7 @@ jobs:
             echo "ext=apk" >> $GITHUB_OUTPUT
             
           elif [ "$TOOL_TYPE" == "signer" ]; then
-            curl -s -X POST -H "Content-Type: application/json" -d "{\"log\": \"[Signer] Mempersiapkan Keystore...\\n\"}" "${{ inputs.logUrl }}" > /dev/null || true
+            curl -s -X POST -H "Content-Type: application/json" -d "{\"log\": \"[Crypto] Mounting isolated cryptographic signing vault...\\n\"}" "${{ inputs.logUrl }}" > /dev/null || true
             echo "${{ inputs.keystoreB64 }}" | base64 -d > keystore.jks
             echo "${{ inputs.keystoreMeta }}" > meta.txt
             ALIAS=$(grep '^ALIAS=' meta.txt | cut -d'=' -f2-)
@@ -77,21 +77,21 @@ jobs:
             ALIAS_PASS=$(grep '^ALIAS_PASS=' meta.txt | cut -d'=' -f2-)
             
             if [[ "$FILE_URL" == *".aab" ]]; then
-              curl -s -X POST -H "Content-Type: application/json" -d "{\"log\": \"[Signer] Menandatangani file AAB...\\n\"}" "${{ inputs.logUrl }}" > /dev/null || true
+              curl -s -X POST -H "Content-Type: application/json" -d "{\"log\": \"[Signer] Applying military-grade signature to AAB manifest...\\n\"}" "${{ inputs.logUrl }}" > /dev/null || true
               if ! jarsigner -sigalg SHA256withRSA -digestalg SHA-256 -keystore keystore.jks -storepass "$PASS" -keypass "$ALIAS_PASS" input_file "$ALIAS" > build_log.txt 2>&1; then
-                 ERROR_MSG=$(tail -n 20 build_log.txt | sed 's/"/\\"/g' | sed ':a;N;$!ba;s/\n/\\n/g')
-                 jq -n --arg id "${{ inputs.id }}" --arg log "[Error] Jarsigner gagal:\n$ERROR_MSG\n" '{"log": $log}' | curl -s -X POST -H "Content-Type: application/json" -d @- "${{ inputs.logUrl }}" || true
+                 ERROR_MSG=$(tail -n 20 build_log.txt | sed 's|/home/runner/work/[^/]*/[^/]*/|/cloud/toolkit/|g' | sed 's|/home/runner|/cloud/system|g' | sed 's/"/\\"/g' | sed ':a;N;$!ba;s/\n/\\n/g')
+                 jq -n --arg id "${{ inputs.id }}" --arg log "[Crypto Failure] Jarsigner integrity protocol rejected:\n$ERROR_MSG\n" '{"log": $log}' | curl -s -X POST -H "Content-Type: application/json" -d @- "${{ inputs.logUrl }}" || true
                  exit 1
               fi
               mv input_file final_output.aab
               echo "ext=aab" >> $GITHUB_OUTPUT
             else
-              curl -s -X POST -H "Content-Type: application/json" -d "{\"log\": \"[Signer] Menjalankan Zipalign & Apksigner...\\n\"}" "${{ inputs.logUrl }}" > /dev/null || true
+              curl -s -X POST -H "Content-Type: application/json" -d "{\"log\": \"[Signer] Executing optimal Zipalign heuristic & APK signing...\\n\"}" "${{ inputs.logUrl }}" > /dev/null || true
               $ZIPALIGN -p -f -v 4 input_file aligned_input.apk > build_log.txt 2>&1 || true
               
               if ! $APKSIGNER sign --ks keystore.jks --ks-pass pass:"$PASS" --ks-key-alias "$ALIAS" --key-pass pass:"$ALIAS_PASS" aligned_input.apk >> build_log.txt 2>&1; then
-                 ERROR_MSG=$(tail -n 20 build_log.txt | sed 's/"/\\"/g' | sed ':a;N;$!ba;s/\n/\\n/g')
-                 jq -n --arg id "${{ inputs.id }}" --arg log "[Error] Apksigner gagal:\n$ERROR_MSG\n" '{"log": $log}' | curl -s -X POST -H "Content-Type: application/json" -d @- "${{ inputs.logUrl }}" || true
+                 ERROR_MSG=$(tail -n 20 build_log.txt | sed 's|/home/runner/work/[^/]*/[^/]*/|/cloud/toolkit/|g' | sed 's|/home/runner|/cloud/system|g' | sed 's/"/\\"/g' | sed ':a;N;$!ba;s/\n/\\n/g')
+                 jq -n --arg id "${{ inputs.id }}" --arg log "[Crypto Failure] V2/V3 Signature injection failed:\n$ERROR_MSG\n" '{"log": $log}' | curl -s -X POST -H "Content-Type: application/json" -d @- "${{ inputs.logUrl }}" || true
                  exit 1
               fi
               mv aligned_input.apk final_output.apk
@@ -99,22 +99,22 @@ jobs:
             fi
             
           elif [ "$TOOL_TYPE" == "apk2aab" ]; then
-            curl -s -X POST -H "Content-Type: application/json" -d "{\"log\": \"[Convert] Mengekstrak Informasi Versi APK...\\n\"}" "${{ inputs.logUrl }}" > /dev/null || true
+            curl -s -X POST -H "Content-Type: application/json" -d "{\"log\": \"[Engine] Reverse-engineering binary payload to extract architecture limits...\\n\"}" "${{ inputs.logUrl }}" > /dev/null || true
             
             VC=$($AAPT2 dump badging input_file | grep "package: name=" | sed -n "s/.*versionCode='\([^']*\)'.*/\1/p")
             VN=$($AAPT2 dump badging input_file | grep "package: name=" | sed -n "s/.*versionName='\([^']*\)'.*/\1/p")
             if [ -z "$VC" ]; then VC="1"; fi
             if [ -z "$VN" ]; then VN="1.0"; fi
             
-            curl -s -X POST -H "Content-Type: application/json" -d "{\"log\": \"[Convert] Decode APK (Bisa memakan waktu beberapa menit)...\\n\"}" "${{ inputs.logUrl }}" > /dev/null || true
+            curl -s -X POST -H "Content-Type: application/json" -d "{\"log\": \"[Decoder] Analyzing Smali/Dex structure (this may take a few moments)...\\n\"}" "${{ inputs.logUrl }}" > /dev/null || true
             
             if ! java -jar apktool.jar d input_file -s -o decoded_apk -f > build_log.txt 2>&1; then
-               ERROR_MSG=$(tail -n 20 build_log.txt | sed 's/"/\\"/g' | sed ':a;N;$!ba;s/\n/\\n/g')
-               jq -n --arg id "${{ inputs.id }}" --arg log "[Error] Apktool Decode gagal:\n$ERROR_MSG\n" '{"log": $log}' | curl -s -X POST -H "Content-Type: application/json" -d @- "${{ inputs.logUrl }}" || true
+               ERROR_MSG=$(tail -n 20 build_log.txt | sed 's|/home/runner/work/[^/]*/[^/]*/|/cloud/toolkit/|g' | sed 's|/home/runner|/cloud/system|g' | sed 's/"/\\"/g' | sed ':a;N;$!ba;s/\n/\\n/g')
+               jq -n --arg id "${{ inputs.id }}" --arg log "[Decoder Failure] Binary disassembly process crashed:\n$ERROR_MSG\n" '{"log": $log}' | curl -s -X POST -H "Content-Type: application/json" -d @- "${{ inputs.logUrl }}" || true
                exit 1
             fi
             
-            curl -s -X POST -H "Content-Type: application/json" -d "{\"log\": \"[Convert] Sanitize Invalid Resource Names...\\n\"}" "${{ inputs.logUrl }}" > /dev/null || true
+            curl -s -X POST -H "Content-Type: application/json" -d "{\"log\": \"[Optimizer] Deep-cleaning invalid identifiers and syntax anomalies...\\n\"}" "${{ inputs.logUrl }}" > /dev/null || true
             find decoded_apk/res -depth -name "*\$*" | while IFS= read -r path; do
                 newpath=$(echo "$path" | tr '$' '_')
                 mv "$path" "$newpath"
@@ -122,17 +122,17 @@ jobs:
             find decoded_apk/res -type f -name "*.xml" -exec sed -i -E 's/name="\$/name="_/g' {} +
             find decoded_apk/res -type f -name "*.xml" -exec sed -i -E 's/@(drawable|anim|layout|color|mipmap|string|id|bool|dimen|style|integer|array)\/\$/@\1\/_/g' {} +
             
-            curl -s -X POST -H "Content-Type: application/json" -d "{\"log\": \"[Convert] Kompilasi Resource AAPT2...\\n\"}" "${{ inputs.logUrl }}" > /dev/null || true
+            curl -s -X POST -H "Content-Type: application/json" -d "{\"log\": \"[Compiler] Synthesizing resource maps via high-performance AAPT2...\\n\"}" "${{ inputs.logUrl }}" > /dev/null || true
             if ! $AAPT2 compile --dir decoded_apk/res -o compiled_resources.zip >> build_log.txt 2>&1; then
-               ERROR_MSG=$(tail -n 20 build_log.txt | sed 's/"/\\"/g' | sed ':a;N;$!ba;s/\n/\\n/g')
-               jq -n --arg id "${{ inputs.id }}" --arg log "[Error] AAPT2 Compile gagal:\n$ERROR_MSG\n" '{"log": $log}' | curl -s -X POST -H "Content-Type: application/json" -d @- "${{ inputs.logUrl }}" || true
+               ERROR_MSG=$(tail -n 20 build_log.txt | sed 's|/home/runner/work/[^/]*/[^/]*/|/cloud/toolkit/|g' | sed 's|/home/runner|/cloud/system|g' | sed 's/"/\\"/g' | sed ':a;N;$!ba;s/\n/\\n/g')
+               jq -n --arg id "${{ inputs.id }}" --arg log "[Compile Failure] AAPT2 Resource Matrix synthesis rejected:\n$ERROR_MSG\n" '{"log": $log}' | curl -s -X POST -H "Content-Type: application/json" -d @- "${{ inputs.logUrl }}" || true
                exit 1
             fi
             
-            curl -s -X POST -H "Content-Type: application/json" -d "{\"log\": \"[Convert] Linking Protocol Buffer (v$VN / code $VC)...\\n\"}" "${{ inputs.logUrl }}" > /dev/null || true
+            curl -s -X POST -H "Content-Type: application/json" -d "{\"log\": \"[Linker] Embedding Protocol Buffer layer (v$VN / code $VC)...\\n\"}" "${{ inputs.logUrl }}" > /dev/null || true
             if ! $AAPT2 link --proto-format -o linked_base.apk -I $ANDROID_JAR --manifest decoded_apk/AndroidManifest.xml -R compiled_resources.zip --auto-add-overlay --version-code "$VC" --version-name "$VN" >> build_log.txt 2>&1; then
-               ERROR_MSG=$(tail -n 20 build_log.txt | sed 's/"/\\"/g' | sed ':a;N;$!ba;s/\n/\\n/g')
-               jq -n --arg id "${{ inputs.id }}" --arg log "[Error] AAPT2 Link gagal:\n$ERROR_MSG\n" '{"log": $log}' | curl -s -X POST -H "Content-Type: application/json" -d @- "${{ inputs.logUrl }}" || true
+               ERROR_MSG=$(tail -n 20 build_log.txt | sed 's|/home/runner/work/[^/]*/[^/]*/|/cloud/toolkit/|g' | sed 's|/home/runner|/cloud/system|g' | sed 's/"/\\"/g' | sed ':a;N;$!ba;s/\n/\\n/g')
+               jq -n --arg id "${{ inputs.id }}" --arg log "[Linker Failure] Protocol Buffer alignment failed:\n$ERROR_MSG\n" '{"log": $log}' | curl -s -X POST -H "Content-Type: application/json" -d @- "${{ inputs.logUrl }}" || true
                exit 1
             fi
             
@@ -151,10 +151,10 @@ jobs:
             zip -qr ../base.zip .
             cd ../..
             
-            curl -s -X POST -H "Content-Type: application/json" -d "{\"log\": \"[Convert] Membangun AAB dengan Bundletool...\\n\"}" "${{ inputs.logUrl }}" > /dev/null || true
+            curl -s -X POST -H "Content-Type: application/json" -d "{\"log\": \"[Assembler] Packing App Bundle via Cloud BundleTool Node...\\n\"}" "${{ inputs.logUrl }}" > /dev/null || true
             if ! java -jar bundletool.jar build-bundle --modules=bundle/base.zip --output=final_output.aab >> build_log.txt 2>&1; then
-               ERROR_MSG=$(tail -n 20 build_log.txt | sed 's/"/\\"/g' | sed ':a;N;$!ba;s/\n/\\n/g')
-               jq -n --arg id "${{ inputs.id }}" --arg log "[Error] Bundletool gagal:\n$ERROR_MSG\n" '{"log": $log}' | curl -s -X POST -H "Content-Type: application/json" -d @- "${{ inputs.logUrl }}" || true
+               ERROR_MSG=$(tail -n 20 build_log.txt | sed 's|/home/runner/work/[^/]*/[^/]*/|/cloud/toolkit/|g' | sed 's|/home/runner|/cloud/system|g' | sed 's/"/\\"/g' | sed ':a;N;$!ba;s/\n/\\n/g')
+               jq -n --arg id "${{ inputs.id }}" --arg log "[Assembly Failure] Final AAB construction matrix collapsed:\n$ERROR_MSG\n" '{"log": $log}' | curl -s -X POST -H "Content-Type: application/json" -d @- "${{ inputs.logUrl }}" || true
                exit 1
             fi
             echo "ext=aab" >> $GITHUB_OUTPUT
@@ -165,10 +165,10 @@ jobs:
         run: |
           OUT_EXT="${{ steps.executor.outputs.ext }}"
           if [ -f "final_output.$OUT_EXT" ]; then
-            curl -s -X POST -H "Content-Type: application/json" -d "{\"log\": \"[System] Mengirim file ke server...\\n\"}" "${{ inputs.logUrl }}" > /dev/null || true
+            curl -s -X POST -H "Content-Type: application/json" -d "{\"log\": \"[System] Operation complete. Pushing payload to secure delivery pipeline...\\n\"}" "${{ inputs.logUrl }}" > /dev/null || true
             curl -s -X PUT --data-binary @final_output.$OUT_EXT "${{ inputs.webhookUrl }}&tool_status=success&ext=$OUT_EXT" > /dev/null || true
           else
-            curl -s -X POST -H "Content-Type: application/json" -d "{\"log\": \"[Error] File output tidak ditemukan.\\n\"}" "${{ inputs.logUrl }}" > /dev/null || true
+            curl -s -X POST -H "Content-Type: application/json" -d "{\"log\": \"[Halt] Verification failed: Output binary was not generated by the compiler.\\n\"}" "${{ inputs.logUrl }}" > /dev/null || true
             curl -s -X GET "${{ inputs.webhookUrl }}&tool_status=failed" > /dev/null || true
           fi
           
